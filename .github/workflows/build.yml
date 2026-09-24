@@ -1,0 +1,58 @@
+name: Build Binaries and Commit to Repo
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'agent.cpp'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Compilers & UPX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libcurl4-openssl-dev upx-ucl g++-aarch64-linux-gnu
+
+      - name: Compile Linux Binaries
+        run: |
+          mkdir -p bin
+          SERVER="${{ secrets.CONF_SERVER_URL || 'https://your-domain.com/cluster.php' }}"
+
+          # Build Linux x86_64
+          g++ -O3 -std=c++17 agent.cpp \
+            -DCONF_SERVER_URL="\"$SERVER\"" \
+            -DCONF_INTERVAL=60 \
+            -lcurl -lpthread -s \
+            -o bin/agent_linux_x86_64
+
+          # Build Linux ARM64
+          aarch64-linux-gnu-g++ -O3 -std=c++17 agent.cpp \
+            -DCONF_SERVER_URL="\"$SERVER\"" \
+            -DCONF_INTERVAL=60 \
+            -lcurl -lpthread -s \
+            -o bin/agent_linux_arm64
+
+          # UPX nén tối ưu
+          upx --best --ultra-brute bin/agent_linux_x86_64 || true
+          upx --best --ultra-brute bin/agent_linux_arm64 || true
+
+          chmod +x bin/*
+
+      - name: Commit Binaries into Git Repo
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add bin/
+          git commit -m "Auto-build and update native binaries [skip ci]" || echo "No changes to commit"
+          git push origin main

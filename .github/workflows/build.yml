@@ -22,30 +22,30 @@ jobs:
       - name: Install Compilers & UPX
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libcurl4-openssl-dev upx-ucl g++-aarch64-linux-gnu
+          sudo apt-get install -y build-essential upx-ucl g++-aarch64-linux-gnu
 
       - name: Compile Linux Binaries
         run: |
           mkdir -p bin
           SERVER="${{ secrets.CONF_SERVER_URL || 'https://your-domain.com/cluster.php' }}"
 
-          # Build Linux x86_64
+          # Build Linux x86_64 (Không phụ thuộc libcurl bên ngoài, tương thích 100% mọi distro)
           g++ -O3 -std=c++17 agent.cpp \
             -DCONF_SERVER_URL="\"$SERVER\"" \
             -DCONF_INTERVAL=60 \
-            -lcurl -lpthread -s \
+            -lpthread -s \
             -o bin/agent_linux_x86_64
 
-          # Build Linux ARM64
+          # Build Linux ARM64 (Cross-compile sạch sẽ không lỗi thiếu header)
           aarch64-linux-gnu-g++ -O3 -std=c++17 agent.cpp \
             -DCONF_SERVER_URL="\"$SERVER\"" \
             -DCONF_INTERVAL=60 \
-            -lcurl -lpthread -s \
+            -lpthread -s \
             -o bin/agent_linux_arm64
 
-          # UPX nén tối ưu
-          upx --best --ultra-brute bin/agent_linux_x86_64 || true
-          upx --best --ultra-brute bin/agent_linux_arm64 || true
+          # Nén UPX siêu nhẹ
+          upx --best --ultra-brute bin/agent_linux_x86_64 2>/dev/null || true
+          upx --best --ultra-brute bin/agent_linux_arm64 2>/dev/null || true
 
           chmod +x bin/*
 

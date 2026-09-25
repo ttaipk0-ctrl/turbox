@@ -2,8 +2,7 @@
 declare(strict_types=1);
 header('X-Content-Type-Options: nosniff');
 
-// 1. CẤU HÌNH TOKEN CỦA 10 DỊCH VỤ KIẾM TIỀN & DePIN THỰC TẾ
-// Server sẽ truy vấn trực tiếp API của từng bên để lấy số dư và tính toán ngày đủ min rút
+// 1. Service API tokens configuration
 $CONFIG = [
     'traffmonetizer_token' => 'Kf0Cz9FcDUF6ItPzY1+XAfOimgAxK2gXO3XgmPXvvKc=',
     'honeygain_token'      => 'YOUR_HONEYGAIN_JWT_TOKEN',
@@ -17,7 +16,7 @@ $CONFIG = [
     'nodepay_token'        => 'YOUR_NODEPAY_TOKEN'
 ];
 
-// Ngưỡng rút tiền tối thiểu chính thức do các bên quy định (Min Payout)
+// Minimum payout thresholds and withdrawal methods
 $PAYOUT_THRESHOLDS = [
     'TraffMonetizer' => ['min' => 10.0, 'unit' => 'USD', 'method' => 'USDT (TRC20), BTC, Payoneer'],
     'Honeygain'      => ['min' => 20.0, 'unit' => 'USD', 'method' => 'JMPT (No Min), PayPal'],
@@ -34,7 +33,7 @@ $PAYOUT_THRESHOLDS = [
 $db = new SQLite3(__DIR__ . '/cluster.db');
 $db->busyTimeout(5000);
 
-// Bảng lưu thông tin máy con (telemetry)
+// Worker node telemetry
 $db->exec("CREATE TABLE IF NOT EXISTS workers (
     id TEXT PRIMARY KEY,
     ip TEXT,
@@ -48,7 +47,7 @@ $db->exec("CREATE TABLE IF NOT EXISTS workers (
     last_seen INTEGER
 )");
 
-// Bảng lưu số dư từ API chính thức
+// Cached service balances
 $db->exec("CREATE TABLE IF NOT EXISTS service_balances (
     service TEXT PRIMARY KEY,
     balance REAL DEFAULT 0.0,
@@ -58,7 +57,7 @@ $db->exec("CREATE TABLE IF NOT EXISTS service_balances (
     last_sync INTEGER DEFAULT 0
 )");
 
-// Bảng lịch sử số dư theo thời gian thực để tính tốc độ kiếm tiền & dự đoán ngày đủ min rút
+// Balance history snapshots for growth velocity calculations
 $db->exec("CREATE TABLE IF NOT EXISTS balance_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     service TEXT,
@@ -68,7 +67,7 @@ $db->exec("CREATE TABLE IF NOT EXISTS balance_history (
 
 $action = $_GET['action'] ?? '';
 
-// API cung cấp token cho agent.cpp khi máy con khởi động
+// API: Deliver tokens to agent clients
 if ($action === 'get_config') {
     header('Content-Type: application/json');
     exit(json_encode([
@@ -78,7 +77,7 @@ if ($action === 'get_config') {
     ]));
 }
 
-// Client heartbeat gửi lên (Ghi nhận trạng thái máy, KHÔNG tính toán tiền ảo)
+// API: Node heartbeat telemetry
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
     $id = substr(trim((string)($_POST['id'] ?? 'node')), 0, 64);
     $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';

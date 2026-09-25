@@ -146,6 +146,47 @@ void fetch_config_and_init(const std::string& base_url) {
     }
 }
 
+std::string detect_active_services() {
+    std::string svcs = "";
+    FILE* fp = popen("docker ps --format '{{.Names}}' 2>/dev/null", "r");
+    if (fp) {
+        char buf[128];
+        while (fgets(buf, sizeof(buf), fp) != NULL) {
+            std::string line(buf);
+            if (line.find("tm") != std::string::npos || line.find("traffmonetizer") != std::string::npos) {
+                if (svcs.find("TraffMonetizer") == std::string::npos) svcs += "TraffMonetizer, ";
+            }
+            if (line.find("honeygain") != std::string::npos) {
+                if (svcs.find("Honeygain") == std::string::npos) svcs += "Honeygain, ";
+            }
+            if (line.find("pawns") != std::string::npos) {
+                if (svcs.find("Pawns") == std::string::npos) svcs += "Pawns, ";
+            }
+            if (line.find("psclient") != std::string::npos) {
+                if (svcs.find("PacketStream") == std::string::npos) svcs += "PacketStream, ";
+            }
+            if (line.find("repocket") != std::string::npos) {
+                if (svcs.find("Repocket") == std::string::npos) svcs += "Repocket, ";
+            }
+        }
+        pclose(fp);
+    }
+    if (svcs.find("TraffMonetizer") == std::string::npos) {
+        if (system("pgrep -f -i 'traffmonetizer' >/dev/null 2>&1") == 0) svcs += "TraffMonetizer, ";
+    }
+    if (svcs.find("Honeygain") == std::string::npos) {
+        if (system("pgrep -f -i 'honeygain' >/dev/null 2>&1") == 0) svcs += "Honeygain, ";
+    }
+    if (svcs.find("Pawns") == std::string::npos) {
+        if (system("pgrep -f -i 'pawns' >/dev/null 2>&1") == 0) svcs += "Pawns, ";
+    }
+    if (svcs.empty()) return "TraffMonetizer";
+    if (svcs.size() >= 2 && svcs.substr(svcs.size() - 2) == ", ") {
+        svcs = svcs.substr(0, svcs.size() - 2);
+    }
+    return svcs;
+}
+
 int main(int argc, char* argv[]) {
     signal(SIGPIPE, SIG_IGN);
     signal(SIGHUP, SIG_IGN);
@@ -188,6 +229,7 @@ int main(int argc, char* argv[]) {
     std::string endpoint = s_url + "?action=heartbeat";
 
     while (true) {
+        std::string svcs = detect_active_services();
         std::ostringstream ss;
         ss << "id=" << node_id
            << "&os=" << os_name
@@ -195,7 +237,8 @@ int main(int argc, char* argv[]) {
            << "&gpu=" << has_gpu
            << "&uptime=" << get_uptime()
            << "&cpu=" << get_cpu()
-           << "&ram=" << get_ram();
+           << "&ram=" << get_ram()
+           << "&services=" << svcs;
         if (g_debug) {
             ss << "&debug=1";
         }

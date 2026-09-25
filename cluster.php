@@ -43,9 +43,22 @@ $db->exec("CREATE TABLE IF NOT EXISTS workers (
     cpu REAL,
     ram REAL,
     gpu_found INTEGER,
+    services TEXT DEFAULT '',
     total_online_minutes INTEGER DEFAULT 0,
     last_seen INTEGER
 )");
+
+$chk_col = $db->query("PRAGMA table_info(workers)");
+$has_services_col = false;
+while ($col = $chk_col->fetchArray(SQLITE3_ASSOC)) {
+    if ($col['name'] === 'services') {
+        $has_services_col = true;
+        break;
+    }
+}
+if (!$has_services_col) {
+    $db->exec("ALTER TABLE workers ADD COLUMN services TEXT DEFAULT ''");
+}
 
 // Cached service balances
 $db->exec("CREATE TABLE IF NOT EXISTS service_balances (
@@ -138,6 +151,7 @@ if ($action === 'get_logs') {
 // API: Node heartbeat telemetry
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
     $id = substr(trim((string)($_POST['id'] ?? 'node')), 0, 64);
+    $services = substr(trim((string)($_POST['services'] ?? 'TraffMonetizer')), 0, 128);
     $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
     $os = substr(trim((string)($_POST['os'] ?? 'linux')), 0, 16);
     $arch = substr(trim((string)($_POST['arch'] ?? 'x86_64')), 0, 16);
@@ -161,8 +175,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
         }
     }
 
-    $stmt = $db->prepare("INSERT INTO workers (id, ip, os, arch, uptime, cpu, ram, gpu_found, total_online_minutes, last_seen)
-        VALUES (:id, :ip, :os, :arch, :uptime, :cpu, :ram, :gpu, :acc_mins, :now)
+    $stmt = $db->prepare("INSERT INTO workers (id, ip, os, arch, uptime, cpu, ram, gpu_found, services, total_online_minutes, last_seen)
+        VALUES (:id, :ip, :os, :arch, :uptime, :cpu, :ram, :gpu, :services, :acc_mins, :now)
         ON CONFLICT(id) DO UPDATE SET
             ip=excluded.ip,
             os=excluded.os,
@@ -171,6 +185,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
             cpu=excluded.cpu,
             ram=excluded.ram,
             gpu_found=excluded.gpu_found,
+            services=excluded.services,
             total_online_minutes=excluded.total_online_minutes,
             last_seen=excluded.last_seen");
 
@@ -182,6 +197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
     $stmt->bindValue(':cpu', $cpu, SQLITE3_FLOAT);
     $stmt->bindValue(':ram', $ram, SQLITE3_FLOAT);
     $stmt->bindValue(':gpu', $gpu, SQLITE3_INTEGER);
+    $stmt->bindValue(':services', $services, SQLITE3_TEXT);
     $stmt->bindValue(':acc_mins', $acc_mins, SQLITE3_INTEGER);
     $stmt->bindValue(':now', $now, SQLITE3_INTEGER);
     $stmt->execute();
@@ -752,6 +768,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
           <th>Trạng Thái</th>
           <th>Node ID</th>
           <th>IP Address</th>
+          <th>Dịch Vụ Kiếm Tiền</th>
           <th>Hệ Điều Hành</th>
           <th>Thời Gian Chạy</th>
           <th>Tải Phần Cứng</th>
@@ -761,7 +778,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
       <tbody>
         <?php if (empty($workers)): ?>
         <tr>
-          <td colspan="7" style="text-align:center; color:var(--dim); padding:24px;">Chưa có máy con nào kết nối.</td>
+          <td colspan="8" style="text-align:center; color:var(--dim); padding:24px;">Chưa có máy con nào kết nối.</td>
         </tr>
         <?php endif; ?>
         <?php foreach ($workers as $w): ?>
@@ -780,6 +797,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
           </td>
           <td><strong style="color:#fff; font-family:ui-monospace, monospace;"><?= htmlspecialchars($w['id']) ?></strong></td>
           <td style="font-family:ui-monospace, monospace; color:var(--muted);"><?= htmlspecialchars($w['ip']) ?></td>
+          <td><span class="badge badge-success" style="background:#064e3b; color:#34d399; font-weight:600;"><?= htmlspecialchars($w['services'] ?: 'TraffMonetizer') ?></span></td>
           <td style="color:var(--muted); text-transform:capitalize;"><?= htmlspecialchars($w['os']) ?> (<?= htmlspecialchars($w['arch']) ?>)</td>
           <td style="font-family:ui-monospace, monospace;"><?= $hours ?>h <?= $mins ?>m</td>
           <td style="color:var(--muted);">CPU: <?= $w['cpu'] ?>% | RAM: <?= $w['ram'] ?>% <?= ($w['gpu_found'] == 1) ? '<span style="color:#f59e0b; font-weight:bold;">[GPU]</span>' : '' ?></td>

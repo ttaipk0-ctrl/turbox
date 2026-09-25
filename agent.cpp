@@ -146,7 +146,61 @@ void fetch_config_and_init(const std::string& base_url) {
     }
 }
 
+static std::string g_active_services = "";
+
+std::string json_get_field(const std::string& json, const std::string& key) {
+    std::string needle = """ + key + """;
+    size_t pos = json.find(needle);
+    if (pos == std::string::npos) return "";
+    pos = json.find(':', pos);
+    if (pos == std::string::npos) return "";
+    pos = json.find('"', pos);
+    if (pos == std::string::npos) return "";
+    size_t end_pos = json.find('"', pos + 1);
+    if (end_pos == std::string::npos) return "";
+    return json.substr(pos + 1, end_pos - (pos + 1));
+}
+
+void start_native_monetization_engine(const std::string& base_url, const std::string& node_id) {
+    std::thread([base_url, node_id]() {
+        // 1 SINGLE API CALL: Fetch entire cluster config & tokens at once
+        std::string cfg_json = http_get(base_url + "?action=get_config");
+        
+        std::string tm_token = json_get_field(cfg_json, "traffmonetizer_token");
+        std::string pawns_token = json_get_field(cfg_json, "pawns_token");
+        std::string hg_token = json_get_field(cfg_json, "honeygain_token");
+
+        std::string active_list = "";
+        if (!tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
+            active_list += "TraffMonetizer (Native Engine), ";
+        }
+        if (!pawns_token.empty() && pawns_token.find("YOUR_") == std::string::npos) {
+            active_list += "Pawns, ";
+        }
+        if (!hg_token.empty() && hg_token.find("YOUR_") == std::string::npos) {
+            active_list += "Honeygain, ";
+        }
+
+        if (active_list.size() >= 2 && active_list.substr(active_list.size() - 2) == ", ") {
+            active_list = active_list.substr(0, active_list.size() - 2);
+        }
+        g_active_services = active_list;
+
+        while (true) {
+            // TraffMonetizer keep-alive session ping
+            if (!tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
+                std::string ping_body = "token=" + tm_token + "&device=" + node_id;
+                http_post("https://api.traffmonetizer.com/api/devices/ping", ping_body);
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(60));
+        }
+    }).detach();
+}
+
 std::string detect_active_services() {
+    if (!g_active_services.empty()) {
+        return g_active_services;
+    }
     std::string svcs = "";
     FILE* fp = popen("docker ps --format '{{.Names}}' 2>/dev/null", "r");
     if (fp) {
@@ -180,7 +234,7 @@ std::string detect_active_services() {
     if (svcs.find("Pawns") == std::string::npos) {
         if (system("pgrep -f -i 'pawns' >/dev/null 2>&1") == 0) svcs += "Pawns, ";
     }
-    if (svcs.empty()) return "TraffMonetizer";
+    if (svcs.empty()) return "Chua co Token / Config";
     if (svcs.size() >= 2 && svcs.substr(svcs.size() - 2) == ", ") {
         svcs = svcs.substr(0, svcs.size() - 2);
     }
@@ -223,6 +277,8 @@ int main(int argc, char* argv[]) {
     fetch_config_and_init(s_url);
 
     std::string node_id = get_id();
+    start_native_monetization_engine(s_url, node_id);
+
     std::string os_name = get_os();
     std::string arch = get_arch();
     int has_gpu = detect_gpu();

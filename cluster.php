@@ -797,7 +797,13 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
           </td>
           <td><strong style="color:#fff; font-family:ui-monospace, monospace;"><?= htmlspecialchars($w['id']) ?></strong></td>
           <td style="font-family:ui-monospace, monospace; color:var(--muted);"><?= htmlspecialchars($w['ip']) ?></td>
-          <td><span class="badge badge-success" style="background:#064e3b; color:#34d399; font-weight:600;"><?= htmlspecialchars($w['services'] ?: 'TraffMonetizer') ?></span></td>
+          <td>
+            <?php if ($w['services'] === 'Chua co Docker/App'): ?>
+              <span class="badge" style="background:#451a03; color:#f59e0b; font-weight:600; font-size:11px;">⚠️ Cần Docker hoặc App</span>
+            <?php else: ?>
+              <span class="badge badge-success" style="background:#064e3b; color:#34d399; font-weight:600; font-size:11px;"><?= htmlspecialchars($w['services'] ?: 'TraffMonetizer') ?></span>
+            <?php endif; ?>
+          </td>
           <td style="color:var(--muted); text-transform:capitalize;"><?= htmlspecialchars($w['os']) ?> (<?= htmlspecialchars($w['arch']) ?>)</td>
           <td style="font-family:ui-monospace, monospace;"><?= $hours ?>h <?= $mins ?>m</td>
           <td style="color:var(--muted);">CPU: <?= $w['cpu'] ?>% | RAM: <?= $w['ram'] ?>% <?= ($w['gpu_found'] == 1) ? '<span style="color:#f59e0b; font-weight:bold;">[GPU]</span>' : '' ?></td>

@@ -93,11 +93,9 @@ if ($action === 'get_config') {
     ]));
 }
 
-// API: Manual log purge action
+// API: Manual log purge action (Xóa sạch toàn bộ log)
 if ($action === 'purge_logs') {
-    $hours = max(1, (int)($_GET['hours'] ?? 24));
-    $cutoff = time() - ($hours * 3600);
-    $db->exec("DELETE FROM cluster_logs WHERE created_at < {$cutoff}");
+    $db->exec("DELETE FROM cluster_logs");
     header('Location: cluster.php?msg=purged');
     exit;
 }
@@ -214,10 +212,10 @@ function sync_real_service_balances(array $config, array $thresholds, SQLite3 $d
     $services = [
         'TraffMonetizer' => [
             'token' => $config['traffmonetizer_token'] ?? '',
-            'url' => 'https://traffmonetizer.com/api/user/stats',
+            'url' => 'https://data.traffmonetizer.com/api/dashboard',
             'type' => 'bearer',
             'extractor' => function($data) {
-                return (float)($data['balance'] ?? $data['user']['balance'] ?? $data['data']['balance'] ?? 0.0);
+                return (float)($data['balance'] ?? $data['user']['balance'] ?? $data['data']['balance'] ?? $data['current_balance'] ?? $data['earnings'] ?? 0.0);
             }
         ],
         'Honeygain' => [
@@ -856,8 +854,8 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
         <select name="filter_hours" class="filter-select" onchange="this.form.submit()">
           <option value="1" <?= $f_hours === 1 ? 'selected' : '' ?>>1 Giờ gần nhất</option>
           <option value="6" <?= $f_hours === 6 ? 'selected' : '' ?>>6 Giờ gần nhất</option>
-          <option value="24" <?= $f_hours === 24 ? 'selected' : '' ?>>24 Giờ gần nhất</option>
-          <option value="72" <?= $f_hours === 72 ? 'selected' : '' ?>>3 Ngày gần nhất</option>
+          <option value="12" <?= $f_hours === 12 ? 'selected' : '' ?>>12 Giờ gần nhất</option>
+          <option value="24" <?= $f_hours === 24 ? 'selected' : '' ?>>24 Giờ (Toàn bộ)</option>
         </select>
       </div>
 
@@ -867,7 +865,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
         <?php if (!empty($f_ip) || (!empty($f_svc) && $f_svc !== 'ALL') || $f_hours !== 24): ?>
         <a href="cluster.php" class="btn-filter" style="background:#475569; text-decoration:none; display:inline-flex; align-items:center;">Đặt lại</a>
         <?php endif; ?>
-        <a href="?action=purge_logs&hours=1" class="btn-purge" title="Xóa toàn bộ log cũ hơn 1 giờ" onclick="return confirm('Xác nhận dọn dẹp các log cũ hơn 1 giờ?');" style="text-decoration:none; display:inline-flex; align-items:center;">🧹 Dọn log cũ</a>
+        <a href="?action=purge_logs" class="btn-purge" title="Xóa sạch toàn bộ nhật ký sự kiện" onclick="return confirm('Xác nhận xóa sạch toàn bộ log trong database?');" style="text-decoration:none; display:inline-flex; align-items:center;">🗑️ Xóa sạch log</a>
       </div>
     </form>
 

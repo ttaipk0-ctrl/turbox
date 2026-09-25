@@ -5,19 +5,18 @@ on:
     branches: [ "main" ]
     paths:
       - 'agent.cpp'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-and-commit:
+  build-linux:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Compilers & UPX
         run: |
@@ -29,30 +28,88 @@ jobs:
           mkdir -p bin
           SERVER="${{ secrets.CONF_SERVER_URL || 'https://your-domain.com/cluster.php' }}"
 
-          # Build Linux x86_64 (Không phụ thuộc libcurl bên ngoài, tương thích 100% mọi distro)
+          # Build Linux x86_64
           g++ -O3 -std=c++17 agent.cpp \
             -DCONF_SERVER_URL="\"$SERVER\"" \
             -DCONF_INTERVAL=60 \
             -lpthread -s \
             -o bin/agent_linux_x86_64
 
-          # Build Linux ARM64 (Cross-compile sạch sẽ không lỗi thiếu header)
+          # Build Linux ARM64
           aarch64-linux-gnu-g++ -O3 -std=c++17 agent.cpp \
             -DCONF_SERVER_URL="\"$SERVER\"" \
             -DCONF_INTERVAL=60 \
             -lpthread -s \
             -o bin/agent_linux_arm64
 
-          # Nén UPX siêu nhẹ
           upx --best --ultra-brute bin/agent_linux_x86_64 2>/dev/null || true
           upx --best --ultra-brute bin/agent_linux_arm64 2>/dev/null || true
 
-          chmod +x bin/*
+      - name: Upload Linux Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: bin/
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Compile macOS Binaries (Apple Silicon + Intel)
+        run: |
+          mkdir -p bin
+          SERVER="${{ secrets.CONF_SERVER_URL || 'https://your-domain.com/cluster.php' }}"
+
+          # Build macOS ARM64 (Apple Silicon M1/M2/M3/M4)
+          clang++ -O3 -std=c++17 agent.cpp \
+            -target arm64-apple-macos \
+            -DCONF_SERVER_URL="\"$SERVER\"" \
+            -DCONF_INTERVAL=60 \
+            -lpthread \
+            -o bin/agent_darwin_arm64
+
+          # Build macOS x86_64 (Intel Mac)
+          clang++ -O3 -std=c++17 agent.cpp \
+            -target x86_64-apple-macos \
+            -DCONF_SERVER_URL="\"$SERVER\"" \
+            -DCONF_INTERVAL=60 \
+            -lpthread \
+            -o bin/agent_darwin_x86_64
+
+      - name: Upload macOS Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binaries
+          path: bin/
+
+  commit-all:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Linux Binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries
+          path: bin/
+
+      - name: Download macOS Binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-binaries
+          path: bin/
 
       - name: Commit Binaries into Git Repo
         run: |
+          chmod +x bin/*
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add bin/
-          git commit -m "Auto-build and update native binaries [skip ci]" || echo "No changes to commit"
+          git commit -m "Auto-build native binaries for Linux & macOS [skip ci]" || echo "No changes"
           git push origin main

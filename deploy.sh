@@ -14,23 +14,9 @@ esac
 
 BIN="./bin/agent_${OS}_${ARCH_TAG}"
 
-# Nếu chưa có file binary (chạy trên macOS hoặc máy chưa build), tự động biên dịch trong 2 giây
 if [ ! -f "$BIN" ]; then
-    mkdir -p bin
-    if command -v clang++ >/dev/null 2>&1; then
-        echo "[*] Compiling $BIN for ${OS} ${ARCH_TAG}..."
-        clang++ -O3 -std=c++17 agent.cpp -lpthread -o "$BIN" 2>/dev/null
-    elif command -v g++ >/dev/null 2>&1; then
-        echo "[*] Compiling $BIN for ${OS} ${ARCH_TAG}..."
-        g++ -O3 -std=c++17 agent.cpp -lpthread -o "$BIN" 2>/dev/null
-    elif command -v c++ >/dev/null 2>&1; then
-        echo "[*] Compiling $BIN for ${OS} ${ARCH_TAG}..."
-        c++ -O3 -std=c++17 agent.cpp -lpthread -o "$BIN" 2>/dev/null
-    fi
-fi
-
-if [ ! -f "$BIN" ]; then
-    echo "[!] Error: Binary $BIN not found and no C++ compiler available."
+    echo "[!] Lỗi: Chưa có file binary '$BIN'."
+    echo "[*] Vui lòng đợi GitHub Actions build xong hoặc chạy: git pull"
     exit 1
 fi
 
@@ -44,7 +30,7 @@ SERVER_URL="$1"
 if pgrep -f "$FULL_BIN_PATH" >/dev/null 2>&1; then
     PIDS=$(pgrep -f "$FULL_BIN_PATH" | tr '
 ' ' ')
-    echo "[✓] Agent is already running (PID: $PIDS)"
+    echo "[✓] Agent đang chạy ngầm (PID: $PIDS)"
 else
     if [ -n "$SERVER_URL" ]; then
         "$FULL_BIN_PATH" "$SERVER_URL" >/dev/null 2>&1 &
@@ -55,9 +41,9 @@ else
     if pgrep -f "$FULL_BIN_PATH" >/dev/null 2>&1; then
         PIDS=$(pgrep -f "$FULL_BIN_PATH" | tr '
 ' ' ')
-        echo "[✓] Agent started successfully in background (PID: $PIDS)"
+        echo "[✓] Khởi động agent thành công (PID: $PIDS)"
     else
-        echo "[!] Warning: Agent did not stay running. Run '$FULL_BIN_PATH' directly to see error."
+        echo "[!] Lỗi: Không thể khởi chạy agent. Hãy thử chạy trực tiếp '$FULL_BIN_PATH' để xem thông báo."
     fi
 fi
 

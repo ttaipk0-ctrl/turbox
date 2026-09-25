@@ -16,10 +16,9 @@ BIN="./bin/agent_${OS}_${ARCH_TAG}"
 CURRENT_PATH=$(pwd -P)
 FULL_BIN_PATH="$CURRENT_PATH/$BIN"
 PID_FILE="$CURRENT_PATH/.agent.pid"
-LOG_FILE="$CURRENT_PATH/.agent.log"
 DEFAULT_SERVER_URL="http://turbox.test/cluster.php"
 
-# Commands: status | log | stop | restart
+# Commands: status | stop | restart | debug
 case "$1" in
     status)
         PID=""
@@ -34,23 +33,13 @@ case "$1" in
         # Fallback check by exact binary path scoped strictly to current user
         PIDS=$(pgrep -u "$(id -u)" -f "$FULL_BIN_PATH" 2>/dev/null)
         if [ -n "$PIDS" ]; then
-            echo "[OK] Agent is running (PID: $(echo $PIDS | tr '
-' ' '))"
+            echo "[OK] Agent is running (PID: $(echo $PIDS | tr '\\n' ' '))"
             ps -p "$PIDS" -o pid,%cpu,%mem,etime,command 2>/dev/null | head -n 2 || true
             exit 0
         else
             echo "[INFO] Agent is not running"
             exit 1
         fi
-        ;;
-    log|logs)
-        if [ -f "$LOG_FILE" ]; then
-            echo "--- Recent Agent Logs ($LOG_FILE) ---"
-            tail -n "${2:-20}" "$LOG_FILE"
-        else
-            echo "[INFO] No log entries found yet in $LOG_FILE"
-        fi
-        exit 0
         ;;
     stop)
         KILLED=0
@@ -78,6 +67,11 @@ case "$1" in
     restart)
         sh "$0" stop >/dev/null 2>&1 || true
         sleep 1
+        ;;
+    debug)
+        echo "[DEBUG] Running agent in foreground (Ctrl+C to stop)..."
+        "$FULL_BIN_PATH" "$DEFAULT_SERVER_URL" --debug
+        exit 0
         ;;
 esac
 
@@ -117,8 +111,7 @@ else
         NEW_PID=$(cat "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
     fi
     if [ -z "$NEW_PID" ] || ! kill -0 "$NEW_PID" 2>/dev/null; then
-        NEW_PID=$(pgrep -u "$(id -u)" -f "$FULL_BIN_PATH" 2>/dev/null | tr '
-' ' ' | xargs)
+        NEW_PID=$(pgrep -u "$(id -u)" -f "$FULL_BIN_PATH" 2>/dev/null | tr '\\n' ' ' | xargs)
     fi
 
     if [ -n "$NEW_PID" ]; then

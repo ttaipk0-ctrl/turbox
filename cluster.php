@@ -65,6 +65,22 @@ $db->exec("CREATE TABLE IF NOT EXISTS balance_history (
     recorded_at INTEGER
 )");
 
+// Server activity & event logs (Auto-purged by hours, no disk I/O on client)
+$db->exec("CREATE TABLE IF NOT EXISTS cluster_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id TEXT,
+    service TEXT,
+    event TEXT,
+    details TEXT,
+    ip TEXT,
+    created_at INTEGER
+)");
+
+// Hourly Auto-Pruning: Purge logs older than 24 hours to prevent heavy database
+$now_ts = time();
+$auto_cutoff = $now_ts - 86400; // 24 hours
+$db->exec("DELETE FROM cluster_logs WHERE created_at < {$auto_cutoff}");
+
 $action = $_GET['action'] ?? '';
 
 // API: Deliver tokens to agent clients
@@ -75,6 +91,50 @@ if ($action === 'get_config') {
         'config' => $CONFIG,
         'timestamp' => time()
     ]));
+}
+
+// API: Manual log purge action
+if ($action === 'purge_logs') {
+    $hours = max(1, (int)($_GET['hours'] ?? 24));
+    $cutoff = time() - ($hours * 3600);
+    $db->exec("DELETE FROM cluster_logs WHERE created_at < {$cutoff}");
+    header('Location: cluster.php?msg=purged');
+    exit;
+}
+
+// API: Get filtered server logs (Plaintext for CLI / deploy.sh)
+if ($action === 'get_logs') {
+    header('Content-Type: text/plain');
+    $filter = trim((string)($_GET['filter'] ?? $_GET['q'] ?? ''));
+    $filter_ip = trim((string)($_GET['ip'] ?? ''));
+    $filter_svc = trim((string)($_GET['service'] ?? ''));
+    $hours = max(1, (int)($_GET['hours'] ?? 24));
+    $limit = min(200, max(5, (int)($_GET['limit'] ?? 30)));
+    $time_limit = time() - ($hours * 3600);
+
+    $sql = "SELECT * FROM cluster_logs WHERE created_at >= {$time_limit}";
+    if (!empty($filter_ip)) {
+        $sql .= " AND ip LIKE '%" . SQLite3::escapeString($filter_ip) . "%'";
+    }
+    if (!empty($filter_svc)) {
+        $sql .= " AND (service LIKE '%" . SQLite3::escapeString($filter_svc) . "%' OR event LIKE '%" . SQLite3::escapeString($filter_svc) . "%')";
+    }
+    if (!empty($filter)) {
+        $f_esc = SQLite3::escapeString($filter);
+        $sql .= " AND (ip LIKE '%{$f_esc}%' OR service LIKE '%{$f_esc}%' OR node_id LIKE '%{$f_esc}%' OR event LIKE '%{$f_esc}%' OR details LIKE '%{$f_esc}%')";
+    }
+    $sql .= " ORDER BY id DESC LIMIT {$limit}";
+
+    $res = $db->query($sql);
+    $out = "";
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $t = date('Y-m-d H:i:s', (int)$row['created_at']);
+        $svc = !empty($row['service']) ? "[{$row['service']}] " : "";
+        $out .= "[$t] {$svc}[{$row['node_id']}] {$row['event']}: {$row['details']} (IP: {$row['ip']})
+";
+    }
+    exit($out ?: "[INFO] No server logs found for filter: " . ($filter ?: ($filter_ip ?: ($filter_svc ?: 'ALL'))) . "
+");
 }
 
 // API: Node heartbeat telemetry
@@ -91,6 +151,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
 
     $existing = $db->querySingle("SELECT last_seen, total_online_minutes FROM workers WHERE id = '" . SQLite3::escapeString($id) . "'", true);
     $acc_mins = (int)($existing['total_online_minutes'] ?? 0);
+    $is_new = empty($existing['last_seen']);
+    $is_reconnect = (!$is_new && ($now - (int)$existing['last_seen']) > 180);
+    $is_high_load = ($cpu > 85.0 || $ram > 90.0);
+    $is_debug_req = (!empty($_POST['debug']) || !empty($_GET['debug']));
+
     if (!empty($existing['last_seen'])) {
         $diff = $now - (int)$existing['last_seen'];
         if ($diff > 10 && $diff <= 180) {
@@ -122,6 +187,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
     $stmt->bindValue(':acc_mins', $acc_mins, SQLITE3_INTEGER);
     $stmt->bindValue(':now', $now, SQLITE3_INTEGER);
     $stmt->execute();
+
+    // Log ONLY significant events or explicit debug requests (prevent flooding DB with 60s routine heartbeats)
+    if ($is_new || $is_reconnect || $is_high_load || $is_debug_req) {
+        $event_type = $is_new ? 'NODE_JOIN' : ($is_reconnect ? 'RECONNECT' : ($is_high_load ? 'HIGH_LOAD' : 'DEBUG'));
+        $log_details = "CPU {$cpu}% | RAM {$ram}% | Up {$uptime}s" . ($is_high_load ? ' [CẢNH BÁO QUÁ TẢI]' : '');
+        $stmt_log = $db->prepare("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
+            VALUES (:node_id, 'NodeAgent', :event, :details, :ip, :created_at)");
+        $stmt_log->bindValue(':node_id', $id, SQLITE3_TEXT);
+        $stmt_log->bindValue(':event', $event_type, SQLITE3_TEXT);
+        $stmt_log->bindValue(':details', $log_details, SQLITE3_TEXT);
+        $stmt_log->bindValue(':ip', $ip, SQLITE3_TEXT);
+        $stmt_log->bindValue(':created_at', $now, SQLITE3_INTEGER);
+        $stmt_log->execute();
+    }
 
     header('Content-Type: application/json');
     exit(json_encode(['status' => 'ok', 'uptime_mins' => $acc_mins]));
@@ -287,6 +366,25 @@ function sync_real_service_balances(array $config, array $thresholds, SQLite3 $d
                 $h_stmt->bindValue(':bal', $balance, SQLITE3_FLOAT);
                 $h_stmt->bindValue(':ts', $now, SQLITE3_INTEGER);
                 $h_stmt->execute();
+            }
+
+            // Log significant financial events only
+            $old_bal = (float)($row['balance'] ?? 0.0);
+            if ($balance > $old_bal && $old_bal > 0.0) {
+                $gain = round($balance - $old_bal, 4);
+                $db->exec("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
+                    VALUES ('server', '" . SQLite3::escapeString($name) . "', 'BALANCE_UP', 'Số dư tăng +{$gain} {$unit} (Hiện tại: {$balance})', '127.0.0.1', {$now})");
+            } elseif ($code >= 400 || !empty($err)) {
+                $db->exec("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
+                    VALUES ('server', '" . SQLite3::escapeString($name) . "', 'SYNC_ERROR', '" . SQLite3::escapeString($status_msg) . "', '127.0.0.1', {$now})");
+            }
+
+            if ($balance >= $min_req && $has_token) {
+                $recent_met = $db->querySingle("SELECT id FROM cluster_logs WHERE service = '" . SQLite3::escapeString($name) . "' AND event = 'THRESHOLD_MET' AND created_at > " . ($now - 43200));
+                if (!$recent_met) {
+                    $db->exec("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
+                        VALUES ('server', '" . SQLite3::escapeString($name) . "', 'THRESHOLD_MET', 'Đủ điều kiện rút thưởng: {$balance} {$unit} (Yêu cầu: {$min_req})', '127.0.0.1', {$now})");
+                }
             }
 
             $last_sync = $now;
@@ -468,7 +566,55 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
   .badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
   .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; }
   .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; }
   .badge-muted { background: #1e293b; color: #94a3b8; }
+  
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    background: #0b1120;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .filter-input, .filter-select {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #e2e8f0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+  }
+  .filter-input:focus, .filter-select:focus {
+    border-color: var(--accent);
+  }
+  .btn-filter {
+    background: #0284c7;
+    color: #fff;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-filter:hover { background: #0369a1; }
+  .btn-purge {
+    background: #334155;
+    color: #cbd5e1;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-left: auto;
+    transition: all 0.15s ease;
+  }
+  .btn-purge:hover { background: #dc2626; color: #fff; }
   
   .rate-val { font-weight: 600; color: var(--accent); font-family: ui-monospace, monospace; }
   .rate-sub { font-size: 11px; color: var(--dim); }
@@ -645,7 +791,136 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
       </tbody>
     </table>
   </div>
+
+  <!-- Server Activity Logs -->
+  <?php
+    $f_ip = trim((string)($_GET['filter_ip'] ?? ''));
+    $f_svc = trim((string)($_GET['filter_service'] ?? ''));
+    $f_hours = max(1, (int)($_GET['filter_hours'] ?? 24));
+    $cutoff_v = time() - ($f_hours * 3600);
+
+    $log_sql = "SELECT * FROM cluster_logs WHERE created_at >= {$cutoff_v}";
+    if (!empty($f_ip)) {
+        $log_sql .= " AND ip LIKE '%" . SQLite3::escapeString($f_ip) . "%'";
+    }
+    if (!empty($f_svc) && $f_svc !== 'ALL') {
+        $log_sql .= " AND (service = '" . SQLite3::escapeString($f_svc) . "' OR event = '" . SQLite3::escapeString($f_svc) . "')";
+    }
+    $log_sql .= " ORDER BY id DESC LIMIT 50";
+    $log_res = $db->query($log_sql);
+
+    $ips_query = $db->query("SELECT DISTINCT ip FROM workers WHERE ip IS NOT NULL AND ip != '' UNION SELECT DISTINCT ip FROM cluster_logs WHERE ip IS NOT NULL AND ip != ''");
+    $distinct_ips = [];
+    while ($ip_r = $ips_query->fetchArray(SQLITE3_ASSOC)) {
+        if (!empty($ip_r['ip'])) $distinct_ips[] = $ip_r['ip'];
+    }
+  ?>
+  <div class="section-hdr" style="margin-top:28px;">
+    <span class="section-title">Nhật Ký Sự Kiện & Hoạt Động Server (Tự dọn dẹp theo giờ)</span>
+    <span style="font-size:12px; color:var(--dim);">Tự động xoá log cũ hơn 24 giờ • Không cần mở file SQLite</span>
+  </div>
+
+  <div class="table-box">
+    <!-- Log Filter Toolbar -->
+    <form method="GET" class="filter-bar">
+      <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <span style="color:var(--muted); font-size:12px; font-weight:600;">🔍 Lọc:</span>
+        <select name="filter_service" class="filter-select" onchange="this.form.submit()">
+          <option value="ALL">-- Tất cả Dịch vụ & Event --</option>
+          <option value="NodeAgent" <?= $f_svc === 'NodeAgent' ? 'selected' : '' ?>>NodeAgent (Node Workers)</option>
+          <option value="NODE_JOIN" <?= $f_svc === 'NODE_JOIN' ? 'selected' : '' ?>>NODE_JOIN (Node mới kết nối)</option>
+          <option value="RECONNECT" <?= $f_svc === 'RECONNECT' ? 'selected' : '' ?>>RECONNECT (Node kết nối lại)</option>
+          <option value="HIGH_LOAD" <?= $f_svc === 'HIGH_LOAD' ? 'selected' : '' ?>>HIGH_LOAD (Cảnh báo quá tải)</option>
+          <option value="BALANCE_UP" <?= $f_svc === 'BALANCE_UP' ? 'selected' : '' ?>>BALANCE_UP (Số dư tăng)</option>
+          <option value="THRESHOLD_MET" <?= $f_svc === 'THRESHOLD_MET' ? 'selected' : '' ?>>THRESHOLD_MET (Đạt min rút)</option>
+          <option value="SYNC_ERROR" <?= $f_svc === 'SYNC_ERROR' ? 'selected' : '' ?>>SYNC_ERROR (Lỗi kết nối)</option>
+          <option value="TraffMonetizer" <?= $f_svc === 'TraffMonetizer' ? 'selected' : '' ?>>TraffMonetizer</option>
+          <option value="Honeygain" <?= $f_svc === 'Honeygain' ? 'selected' : '' ?>>Honeygain</option>
+          <option value="Pawns.app" <?= $f_svc === 'Pawns.app' ? 'selected' : '' ?>>Pawns.app</option>
+          <option value="Repocket" <?= $f_svc === 'Repocket' ? 'selected' : '' ?>>Repocket</option>
+          <option value="PacketStream" <?= $f_svc === 'PacketStream' ? 'selected' : '' ?>>PacketStream</option>
+          <option value="Bitping" <?= $f_svc === 'Bitping' ? 'selected' : '' ?>>Bitping</option>
+          <option value="EarnFM" <?= $f_svc === 'EarnFM' ? 'selected' : '' ?>>EarnFM</option>
+          <option value="ProxyLite" <?= $f_svc === 'ProxyLite' ? 'selected' : '' ?>>ProxyLite</option>
+          <option value="Grass Network" <?= $f_svc === 'Grass Network' ? 'selected' : '' ?>>Grass Network</option>
+          <option value="Nodepay DePIN" <?= $f_svc === 'Nodepay DePIN' ? 'selected' : '' ?>>Nodepay DePIN</option>
+        </select>
+
+        <select name="filter_ip" class="filter-select" onchange="this.form.submit()">
+          <option value="">-- Tất cả IP --</option>
+          <?php foreach ($distinct_ips as $tip): ?>
+          <option value="<?= htmlspecialchars($tip) ?>" <?= $f_ip === $tip ? 'selected' : '' ?>><?= htmlspecialchars($tip) ?></option>
+          <?php endforeach; ?>
+        </select>
+
+        <select name="filter_hours" class="filter-select" onchange="this.form.submit()">
+          <option value="1" <?= $f_hours === 1 ? 'selected' : '' ?>>1 Giờ gần nhất</option>
+          <option value="6" <?= $f_hours === 6 ? 'selected' : '' ?>>6 Giờ gần nhất</option>
+          <option value="24" <?= $f_hours === 24 ? 'selected' : '' ?>>24 Giờ gần nhất</option>
+          <option value="72" <?= $f_hours === 72 ? 'selected' : '' ?>>3 Ngày gần nhất</option>
+        </select>
+      </div>
+
+      <input type="text" id="liveSearchInput" placeholder="Tìm nhanh IP, tên service, node..." class="filter-input" style="width:210px;" onkeyup="filterLogRows()">
+
+      <div style="margin-left:auto; display:flex; gap:8px;">
+        <?php if (!empty($f_ip) || (!empty($f_svc) && $f_svc !== 'ALL') || $f_hours !== 24): ?>
+        <a href="cluster.php" class="btn-filter" style="background:#475569; text-decoration:none; display:inline-flex; align-items:center;">Đặt lại</a>
+        <?php endif; ?>
+        <a href="?action=purge_logs&hours=1" class="btn-purge" title="Xóa toàn bộ log cũ hơn 1 giờ" onclick="return confirm('Xác nhận dọn dẹp các log cũ hơn 1 giờ?');" style="text-decoration:none; display:inline-flex; align-items:center;">🧹 Dọn log cũ</a>
+      </div>
+    </form>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Thời Gian</th>
+          <th>Dịch Vụ / Nguồn</th>
+          <th>Node ID</th>
+          <th>IP Address</th>
+          <th>Sự Kiện</th>
+          <th>Chi Tiết</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php
+          $has_logs = false;
+          while ($log = $log_res->fetchArray(SQLITE3_ASSOC)):
+            $has_logs = true;
+            $evt = (string)($log['event'] ?? '');
+            $badge_cls = 'badge-muted';
+            if ($evt === 'NODE_JOIN' || $evt === 'BALANCE_UP' || $evt === 'THRESHOLD_MET') $badge_cls = 'badge-success';
+            elseif ($evt === 'RECONNECT') $badge_cls = 'badge-warning';
+            elseif ($evt === 'HIGH_LOAD' || strpos($evt, 'ERROR') !== false) $badge_cls = 'badge-danger';
+        ?>
+        <tr class="log-item-row">
+          <td style="font-family:ui-monospace, monospace; color:var(--dim); font-size:12px; white-space:nowrap;"><?= date('Y-m-d H:i:s', (int)$log['created_at']) ?></td>
+          <td><span style="font-weight:600; color:#38bdf8;"><?= htmlspecialchars($log['service'] ?: 'NodeAgent') ?></span></td>
+          <td><strong style="color:#fff; font-family:ui-monospace, monospace;"><?= htmlspecialchars($log['node_id']) ?></strong></td>
+          <td style="font-family:ui-monospace, monospace; color:var(--muted);"><?= htmlspecialchars($log['ip']) ?></td>
+          <td><span class="badge <?= $badge_cls ?>"><?= htmlspecialchars($log['event']) ?></span></td>
+          <td style="color:var(--muted); font-size:12px;"><?= htmlspecialchars($log['details']) ?></td>
+        </tr>
+        <?php endwhile; ?>
+        <?php if (!$has_logs): ?>
+        <tr>
+          <td colspan="6" style="text-align:center; color:var(--dim); padding:24px;">Không có log sự kiện nào phù hợp bộ lọc.</td>
+        </tr>
+        <?php endif; ?>
+      </tbody>
+    </table>
+  </div>
 </div>
+
+<script>
+function filterLogRows() {
+  var q = (document.getElementById('liveSearchInput').value || '').toLowerCase();
+  var rows = document.querySelectorAll('.log-item-row');
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].style.display = rows[i].textContent.toLowerCase().indexOf(q) > -1 ? '' : 'none';
+  }
+}
+</script>
 
 </body>
 </html>

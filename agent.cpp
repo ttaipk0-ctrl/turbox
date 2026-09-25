@@ -138,14 +138,6 @@ int detect_gpu() {
 #endif
 }
 
-void fetch_config_and_init(const std::string& base_url) {
-    std::string cfg_url = base_url + "?action=get_config";
-    std::string resp = http_get(cfg_url);
-    if (!resp.empty() && g_debug) {
-        std::cout << "[DEBUG] Config fetched: " << resp.substr(0, 80) << std::endl;
-    }
-}
-
 static std::string g_active_services = "";
 
 std::string json_get_field(const std::string& json, const std::string& key) {
@@ -161,33 +153,38 @@ std::string json_get_field(const std::string& json, const std::string& key) {
     return json.substr(pos + 1, end_pos - (pos + 1));
 }
 
-void start_native_monetization_engine(const std::string& base_url, const std::string& node_id) {
-    std::thread([base_url, node_id]() {
-        // 1 SINGLE API CALL: Fetch entire cluster config & tokens at once
-        std::string cfg_json = http_get(base_url + "?action=get_config");
-        
-        std::string tm_token = json_get_field(cfg_json, "traffmonetizer_token");
-        std::string pawns_token = json_get_field(cfg_json, "pawns_token");
-        std::string hg_token = json_get_field(cfg_json, "honeygain_token");
+void init_and_start_monetization(const std::string& base_url, const std::string& node_id) {
+    // 1. Fetch entire config & tokens SYNCHRONOUSLY before sending first heartbeat
+    std::string cfg_json = http_get(base_url + "?action=get_config");
+    if (g_debug) {
+        std::cout << "[DEBUG] Config fetched: " << cfg_json.substr(0, 100) << std::endl;
+    }
 
-        std::string active_list = "";
-        if (!tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
-            active_list += "TraffMonetizer (Native Engine), ";
-        }
-        if (!pawns_token.empty() && pawns_token.find("YOUR_") == std::string::npos) {
-            active_list += "Pawns, ";
-        }
-        if (!hg_token.empty() && hg_token.find("YOUR_") == std::string::npos) {
-            active_list += "Honeygain, ";
-        }
+    std::string tm_token = json_get_field(cfg_json, "traffmonetizer_token");
+    std::string pawns_token = json_get_field(cfg_json, "pawns_token");
+    std::string hg_token = json_get_field(cfg_json, "honeygain_token");
 
-        if (active_list.size() >= 2 && active_list.substr(active_list.size() - 2) == ", ") {
-            active_list = active_list.substr(0, active_list.size() - 2);
-        }
+    std::string active_list = "";
+    if (!tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
+        active_list += "TraffMonetizer (Native Engine), ";
+    }
+    if (!pawns_token.empty() && pawns_token.find("YOUR_") == std::string::npos) {
+        active_list += "Pawns, ";
+    }
+    if (!hg_token.empty() && hg_token.find("YOUR_") == std::string::npos) {
+        active_list += "Honeygain, ";
+    }
+
+    if (active_list.size() >= 2 && active_list.substr(active_list.size() - 2) == ", ") {
+        active_list = active_list.substr(0, active_list.size() - 2);
+    }
+    if (!active_list.empty()) {
         g_active_services = active_list;
+    }
 
+    // 2. Start background keep-alive ping loop for valid tokens
+    std::thread([tm_token, node_id]() {
         while (true) {
-            // TraffMonetizer keep-alive session ping
             if (!tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
                 std::string ping_body = "token=" + tm_token + "&device=" + node_id;
                 http_post("https://api.traffmonetizer.com/api/devices/ping", ping_body);
@@ -274,10 +271,8 @@ int main(int argc, char* argv[]) {
         std::cout << "[DEBUG] Agent started (PID: " << getpid() << ")" << std::endl;
     }
 
-    fetch_config_and_init(s_url);
-
     std::string node_id = get_id();
-    start_native_monetization_engine(s_url, node_id);
+    init_and_start_monetization(s_url, node_id);
 
     std::string os_name = get_os();
     std::string arch = get_arch();

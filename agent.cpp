@@ -28,7 +28,7 @@
 static bool g_debug = false;
 
 static std::string http_get(const std::string& url) {
-    std::string cmd = "curl -sk --max-time 15 \"" + url + "\" 2>/dev/null";
+    std::string cmd = "curl -skL --max-time 15 \"" + url + "\" 2>/dev/null";
     FILE* fp = popen(cmd.c_str(), "r");
     if (!fp) return "";
     char buf[512];
@@ -41,7 +41,7 @@ static std::string http_get(const std::string& url) {
 }
 
 static void http_post(const std::string& url, const std::string& data) {
-    std::string cmd = "curl -sk --max-time 10 -d \"" + data + "\" \"" + url + "\" >/dev/null 2>&1";
+    std::string cmd = "curl -skL --max-time 10 -d \"" + data + "\" \"" + url + "\" >/dev/null 2>&1";
     int ret = system(cmd.c_str());
     (void)ret;
 }
@@ -150,7 +150,17 @@ std::string json_get_field(const std::string& json, const std::string& key) {
     if (pos == std::string::npos) return "";
     size_t end_pos = json.find('"', pos + 1);
     if (end_pos == std::string::npos) return "";
-    return json.substr(pos + 1, end_pos - (pos + 1));
+    std::string val = json.substr(pos + 1, end_pos - (pos + 1));
+    std::string clean = "";
+    for (size_t i = 0; i < val.length(); ++i) {
+        if (val[i] == 92 && i + 1 < val.length() && val[i+1] == '/') {
+            clean += '/';
+            ++i;
+        } else {
+            clean += val[i];
+        }
+    }
+    return clean;
 }
 
 void init_and_start_monetization(const std::string& base_url, const std::string& node_id) {
@@ -163,6 +173,19 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
     std::string tm_token = json_get_field(cfg_json, "traffmonetizer_token");
     std::string pawns_token = json_get_field(cfg_json, "pawns_token");
     std::string hg_token = json_get_field(cfg_json, "honeygain_token");
+
+    // Dual fallback: If JSON parsing was empty, fetch direct token
+    if (tm_token.empty()) {
+        std::string raw_tok = http_get(base_url + "?action=get_token&service=traffmonetizer");
+        while (!raw_tok.empty() && (raw_tok.back() == '
+' || raw_tok.back() == '
+' || raw_tok.back() == ' ')) {
+            raw_tok.pop_back();
+        }
+        if (!raw_tok.empty() && raw_tok[0] != '<' && raw_tok[0] != '{') {
+            tm_token = raw_tok;
+        }
+    }
 
     std::string active_list = "";
     if (!tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
@@ -183,15 +206,17 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
     }
 
     // 2. Start background keep-alive ping loop for valid tokens
-    std::thread([tm_token, node_id]() {
-        while (true) {
-            if (!tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
+    static bool worker_running = false;
+    if (!worker_running && !tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
+        worker_running = true;
+        std::thread([tm_token, node_id]() {
+            while (true) {
                 std::string ping_body = "token=" + tm_token + "&device=" + node_id;
                 http_post("https://api.traffmonetizer.com/api/devices/ping", ping_body);
+                std::this_thread::sleep_for(std::chrono::seconds(60));
             }
-            std::this_thread::sleep_for(std::chrono::seconds(60));
-        }
-    }).detach();
+        }).detach();
+    }
 }
 
 std::string detect_active_services() {
@@ -263,7 +288,8 @@ int main(int argc, char* argv[]) {
 
     FILE* pf = fopen(".agent.pid", "w");
     if (pf) {
-        fprintf(pf, "%d\\n", (int)getpid());
+        fprintf(pf, "%d
+", (int)getpid());
         fclose(pf);
     }
 
@@ -280,6 +306,9 @@ int main(int argc, char* argv[]) {
     std::string endpoint = s_url + "?action=heartbeat";
 
     while (true) {
+        if (g_active_services.empty()) {
+            init_and_start_monetization(s_url, node_id);
+        }
         std::string svcs = detect_active_services();
         std::ostringstream ss;
         ss << "id=" << node_id

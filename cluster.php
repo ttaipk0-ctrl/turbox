@@ -103,7 +103,15 @@ if ($action === 'get_config') {
         'status' => 'ok',
         'config' => $CONFIG,
         'timestamp' => time()
-    ]));
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+}
+
+// API: Direct token fallback
+if ($action === 'get_token') {
+    $svc = strtolower(trim((string)($_GET['service'] ?? 'traffmonetizer')));
+    $token_key = $svc . '_token';
+    header('Content-Type: text/plain');
+    exit((string)($CONFIG[$token_key] ?? ''));
 }
 
 // API: Manual log purge action (Xóa sạch toàn bộ log)
@@ -141,11 +149,9 @@ if ($action === 'get_logs') {
     while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
         $t = date('Y-m-d H:i:s', (int)$row['created_at']);
         $svc = !empty($row['service']) ? "[{$row['service']}] " : "";
-        $out .= "[$t] {$svc}[{$row['node_id']}] {$row['event']}: {$row['details']} (IP: {$row['ip']})
-";
+        $out .= "[$t] {$svc}[{$row['node_id']}] {$row['event']}: {$row['details']} (IP: {$row['ip']})" . PHP_EOL;
     }
-    exit($out ?: "[INFO] No server logs found for filter: " . ($filter ?: ($filter_ip ?: ($filter_svc ?: 'ALL'))) . "
-");
+    exit($out ?: "[INFO] No server logs found for filter: " . ($filter ?: ($filter_ip ?: ($filter_svc ?: 'ALL'))) . PHP_EOL);
 }
 
 // API: Node heartbeat telemetry
@@ -228,7 +234,7 @@ function sync_real_service_balances(array $config, array $thresholds, SQLite3 $d
     $services = [
         'TraffMonetizer' => [
             'token' => $config['traffmonetizer_token'] ?? '',
-            'url' => 'https://data.traffmonetizer.com/api/dashboard',
+            'url' => 'https://data.traffmonetizer.com/api/user/get',
             'type' => 'bearer',
             'extractor' => function($data) {
                 return (float)($data['balance'] ?? $data['user']['balance'] ?? $data['data']['balance'] ?? $data['current_balance'] ?? $data['earnings'] ?? 0.0);
@@ -886,6 +892,8 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
       <input type="text" id="liveSearchInput" placeholder="Tìm nhanh IP, tên service, node..." class="filter-input" style="width:210px;" onkeyup="filterLogRows()">
 
       <div style="margin-left:auto; display:flex; gap:8px;">
+        <button type="button" id="btnCopyErrors" onclick="copyErrorLogs()" class="btn-filter" style="background:#dc2626; color:#fff; cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:5px; border:none; padding:7px 12px; border-radius:6px;">⚠️ Copy Log Lỗi</button>
+        <button type="button" id="btnCopyAll" onclick="copyAllLogs()" class="btn-filter" style="background:#0284c7; color:#fff; cursor:pointer; font-weight:600; display:inline-flex; align-items:center; gap:5px; border:none; padding:7px 12px; border-radius:6px;">📋 Copy Toàn Bộ Log</button>
         <?php if (!empty($f_ip) || (!empty($f_svc) && $f_svc !== 'ALL') || $f_hours !== 24): ?>
         <a href="cluster.php" class="btn-filter" style="background:#475569; text-decoration:none; display:inline-flex; align-items:center;">Đặt lại</a>
         <?php endif; ?>
@@ -941,6 +949,53 @@ function filterLogRows() {
   for (var i = 0; i < rows.length; i++) {
     rows[i].style.display = rows[i].textContent.toLowerCase().indexOf(q) > -1 ? '' : 'none';
   }
+}
+
+function copyErrorLogs() {
+  var rows = document.querySelectorAll('.log-item-row');
+  var lines = ['=== NHAT KY LOI CLUSTER (ERROR LOGS) ===', 'Thoi Gian | Dich Vu | Node ID | IP | Su Kien | Chi Tiet'];
+  var count = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var badge = rows[i].querySelector('.badge');
+    var badgeText = badge ? badge.textContent : '';
+    if (badgeText.indexOf('ERROR') > -1 || badgeText.indexOf('HIGH_LOAD') > -1) {
+      var cells = rows[i].querySelectorAll('td');
+      var r = [];
+      for (var j = 0; j < cells.length; j++) {
+        r.push(cells[j].textContent.trim());
+      }
+      lines.push(r.join(' | '));
+      count++;
+    }
+  }
+  if (count === 0) lines.push('(Khong co su kien loi nao)');
+  navigator.clipboard.writeText(lines.join(String.fromCharCode(10))).then(function() {
+    var btn = document.getElementById('btnCopyErrors');
+    var old = btn.innerHTML;
+    btn.innerHTML = 'Da Copy (' + count + ' loi)!';
+    btn.style.background = '#16a34a';
+    setTimeout(function() { btn.innerHTML = old; btn.style.background = '#dc2626'; }, 2500);
+  });
+}
+
+function copyAllLogs() {
+  var rows = document.querySelectorAll('.log-item-row');
+  var lines = ['=== TOAN BO NHAT KY CLUSTER (ALL LOGS) ===', 'Thoi Gian | Dich Vu | Node ID | IP | Su Kien | Chi Tiet'];
+  for (var i = 0; i < rows.length; i++) {
+    var cells = rows[i].querySelectorAll('td');
+    var r = [];
+    for (var j = 0; j < cells.length; j++) {
+      r.push(cells[j].textContent.trim());
+    }
+    lines.push(r.join(' | '));
+  }
+  navigator.clipboard.writeText(lines.join(String.fromCharCode(10))).then(function() {
+    var btn = document.getElementById('btnCopyAll');
+    var old = btn.innerHTML;
+    btn.innerHTML = 'Da Copy ' + rows.length + ' dong!';
+    btn.style.background = '#16a34a';
+    setTimeout(function() { btn.innerHTML = old; btn.style.background = '#0284c7'; }, 2500);
+  });
 }
 </script>
 

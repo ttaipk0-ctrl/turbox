@@ -234,10 +234,10 @@ function sync_real_service_balances(array $config, array $thresholds, SQLite3 $d
     $services = [
         'TraffMonetizer' => [
             'token' => $config['traffmonetizer_token'] ?? '',
-            'url' => 'https://data.traffmonetizer.com/api/user/get',
-            'type' => 'bearer',
+            'url' => '',
+            'type' => 'node_token',
             'extractor' => function($data) {
-                return (float)($data['balance'] ?? $data['user']['balance'] ?? $data['data']['balance'] ?? $data['current_balance'] ?? $data['earnings'] ?? 0.0);
+                return 0.0;
             }
         ],
         'Honeygain' => [
@@ -328,6 +328,23 @@ function sync_real_service_balances(array $config, array $thresholds, SQLite3 $d
         $status_msg = (string)($row['status_msg'] ?? ($has_token ? 'Chưa đồng bộ' : 'Chưa cấu hình'));
         $last_sync = (int)($row['last_sync'] ?? 0);
 
+        if ($s['type'] === 'node_token') {
+            $status_msg = $has_token ? 'Đang chạy trên Node (Xem số dư tại TraffMonetizer.com)' : 'Chưa cấu hình Token';
+            $stmt = $db->prepare("INSERT INTO service_balances (service, balance, currency, min_payout, status_msg, last_sync)
+                VALUES (:svc, :bal, :cur, :min, :msg, :sync)
+                ON CONFLICT(service) DO UPDATE SET
+                    status_msg=excluded.status_msg,
+                    last_sync=excluded.last_sync");
+            $stmt->bindValue(':svc', $name, SQLITE3_TEXT);
+            $stmt->bindValue(':bal', $balance, SQLITE3_FLOAT);
+            $stmt->bindValue(':cur', $unit, SQLITE3_TEXT);
+            $stmt->bindValue(':min', $min_req, SQLITE3_FLOAT);
+            $stmt->bindValue(':msg', $status_msg, SQLITE3_TEXT);
+            $stmt->bindValue(':sync', $now, SQLITE3_INTEGER);
+            $stmt->execute();
+            continue;
+        }
+
         if ($has_token && ($force || ($now - $last_sync > $cache_timeout))) {
             $ch = curl_init();
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -395,8 +412,11 @@ function sync_real_service_balances(array $config, array $thresholds, SQLite3 $d
                 $db->exec("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
                     VALUES ('server', '" . SQLite3::escapeString($name) . "', 'BALANCE_UP', 'Số dư tăng +{$gain} {$unit} (Hiện tại: {$balance})', '127.0.0.1', {$now})");
             } elseif ($code >= 400 || !empty($err)) {
-                $db->exec("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
-                    VALUES ('server', '" . SQLite3::escapeString($name) . "', 'SYNC_ERROR', '" . SQLite3::escapeString($status_msg) . "', '127.0.0.1', {$now})");
+                $last_err = (int)$db->querySingle("SELECT created_at FROM cluster_logs WHERE service = '" . SQLite3::escapeString($name) . "' AND event = 'SYNC_ERROR' ORDER BY created_at DESC LIMIT 1");
+                if (($now - $last_err) > 21600) {
+                    $db->exec("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
+                        VALUES ('server', '" . SQLite3::escapeString($name) . "', 'SYNC_ERROR', '" . SQLite3::escapeString($status_msg) . "', '127.0.0.1', {$now})");
+                }
             }
 
             if ($balance >= $min_req && $has_token) {
@@ -923,7 +943,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
             elseif ($evt === 'RECONNECT') $badge_cls = 'badge-warning';
             elseif ($evt === 'HIGH_LOAD' || strpos($evt, 'ERROR') !== false) $badge_cls = 'badge-danger';
         ?>
-        <tr class="log-item-row">
+        <tr class="log-item-row" data-event="<?= htmlspecialchars($evt) ?>">
           <td style="font-family:ui-monospace, monospace; color:var(--dim); font-size:12px; white-space:nowrap;"><?= date('Y-m-d H:i:s', (int)$log['created_at']) ?></td>
           <td><span style="font-weight:600; color:#38bdf8;"><?= htmlspecialchars($log['service'] ?: 'NodeAgent') ?></span></td>
           <td><strong style="color:#fff; font-family:ui-monospace, monospace;"><?= htmlspecialchars($log['node_id']) ?></strong></td>
@@ -951,14 +971,72 @@ function filterLogRows() {
   }
 }
 
+function copyToClipboardFailsafe(text, btnId, successLabel, defaultLabel, activeBg, defaultBg) {
+  var btn = document.getElementById(btnId);
+  function onSuccess() {
+    if (!btn) return;
+    btn.innerHTML = successLabel;
+    btn.style.background = activeBg;
+    setTimeout(function() {
+      btn.innerHTML = defaultLabel;
+      btn.style.background = defaultBg;
+    }, 2500);
+  }
+
+  // Strategy 1: Modern navigator.clipboard API (requires secure context HTTPS or localhost)
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(onSuccess).catch(function() {
+      if (execFallback(text)) onSuccess();
+      else promptFallback(text);
+    });
+    return;
+  }
+
+  // Strategy 2: ExecCommand('copy') with hidden textarea (works seamlessly on HTTP and custom domains)
+  if (execFallback(text)) {
+    onSuccess();
+    return;
+  }
+
+  // Strategy 3: Prompt user directly if all programmatic copy attempts are denied
+  promptFallback(text);
+}
+
+function execFallback(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  ta.style.top = '0';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, 999999);
+  var ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (err) {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+function promptFallback(text) {
+  window.prompt('Sao chép nhật ký bên dưới (Ctrl+C / Cmd+C):', text);
+}
+
 function copyErrorLogs() {
   var rows = document.querySelectorAll('.log-item-row');
   var lines = ['=== NHAT KY LOI CLUSTER (ERROR LOGS) ===', 'Thoi Gian | Dich Vu | Node ID | IP | Su Kien | Chi Tiet'];
   var count = 0;
   for (var i = 0; i < rows.length; i++) {
+    var ev = rows[i].getAttribute('data-event') || '';
     var badge = rows[i].querySelector('.badge');
     var badgeText = badge ? badge.textContent : '';
-    if (badgeText.indexOf('ERROR') > -1 || badgeText.indexOf('HIGH_LOAD') > -1) {
+    if (ev.indexOf('ERROR') > -1 || ev.indexOf('HIGH_LOAD') > -1 || badgeText.indexOf('ERROR') > -1 || badgeText.indexOf('HIGH_LOAD') > -1) {
       var cells = rows[i].querySelectorAll('td');
       var r = [];
       for (var j = 0; j < cells.length; j++) {
@@ -968,14 +1046,15 @@ function copyErrorLogs() {
       count++;
     }
   }
-  if (count === 0) lines.push('(Khong co su kien loi nao)');
-  navigator.clipboard.writeText(lines.join(String.fromCharCode(10))).then(function() {
-    var btn = document.getElementById('btnCopyErrors');
-    var old = btn.innerHTML;
-    btn.innerHTML = 'Da Copy (' + count + ' loi)!';
-    btn.style.background = '#16a34a';
-    setTimeout(function() { btn.innerHTML = old; btn.style.background = '#dc2626'; }, 2500);
-  });
+  if (count === 0) lines.push('(Khong co su kien loi nao trong he thong)');
+  copyToClipboardFailsafe(
+    lines.join(String.fromCharCode(10)),
+    'btnCopyErrors',
+    'Da Copy (' + count + ' loi)!',
+    '⚠️ Copy Log Lỗi',
+    '#16a34a',
+    '#dc2626'
+  );
 }
 
 function copyAllLogs() {
@@ -989,13 +1068,15 @@ function copyAllLogs() {
     }
     lines.push(r.join(' | '));
   }
-  navigator.clipboard.writeText(lines.join(String.fromCharCode(10))).then(function() {
-    var btn = document.getElementById('btnCopyAll');
-    var old = btn.innerHTML;
-    btn.innerHTML = 'Da Copy ' + rows.length + ' dong!';
-    btn.style.background = '#16a34a';
-    setTimeout(function() { btn.innerHTML = old; btn.style.background = '#0284c7'; }, 2500);
-  });
+  if (rows.length === 0) lines.push('(Khong co dong log nao)');
+  copyToClipboardFailsafe(
+    lines.join(String.fromCharCode(10)),
+    'btnCopyAll',
+    'Da Copy ' + rows.length + ' dong!',
+    '📋 Copy Toàn Bộ Log',
+    '#16a34a',
+    '#0284c7'
+  );
 }
 </script>
 

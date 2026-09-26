@@ -239,7 +239,7 @@ std::string detect_active_services() {
     if (system("pgrep -f -i 'repocket' >/dev/null 2>&1") == 0) {
         svcs += "Repocket, ";
     }
-    if (svcs.empty()) return "Đang kết nối Engine...";
+    if (svcs.empty()) return "TraffMonetizer (Connecting)";
     if (svcs.size() >= 2 && svcs.substr(svcs.size() - 2) == ", ") {
         svcs = svcs.substr(0, svcs.size() - 2);
     }
@@ -265,10 +265,6 @@ int main(int argc, char* argv[]) {
         g_debug = true;
     }
 
-    if (!g_debug) {
-        if (daemon(1, 0) != 0) {}
-    }
-
     FILE* pf = fopen(".agent.pid", "w");
     if (pf) {
         fprintf(pf, "%d%c", (int)getpid(), 10);
@@ -276,26 +272,56 @@ int main(int argc, char* argv[]) {
     }
 
     if (g_debug) {
-        std::cout << "[DEBUG] Agent started (PID: " << getpid() << ")" << std::endl;
+        std::cout << "[DEBUG] Agent started (PID: " << getpid() << ") Server: " << s_url << std::endl;
     }
 
     std::string node_id = get_id();
-    init_and_start_monetization(s_url, node_id);
-
     std::string os_name = get_os();
     std::string arch = get_arch();
     int has_gpu = detect_gpu();
     std::string endpoint = s_url + "?action=heartbeat";
 
+    // 1. Gửi tức thì Heartbeat đầu tiên (Kèm event=START & first=1 để Server ghi nhận Node ONLINE và sinh log ngay)
+    {
+        std::ostringstream ss;
+        ss << "action=heartbeat"
+           << "&id=" << node_id
+           << "&os=" << os_name
+           << "&arch=" << arch
+           << "&gpu=" << has_gpu
+           << "&uptime=" << get_uptime()
+           << "&cpu=" << get_cpu()
+           << "&ram=" << get_ram()
+           << "&services=TraffMonetizer"
+           << "&event=START"
+           << "&first=1";
+        if (g_debug) ss << "&debug=1";
+        http_post(endpoint, ss.str());
+        if (g_debug) {
+            std::cout << "[DEBUG] First heartbeat sent immediately to " << endpoint << std::endl;
+        }
+    }
+
+    // 2. Khởi tạo và duy trì Monetization Engine trong background thread (Zero-blocking heartbeat)
+    std::thread tm_th([s_url, node_id]() {
+        init_and_start_monetization(s_url, node_id);
+    });
+    tm_th.detach();
+
+    // 3. Vòng lặp định kỳ gửi Telemetry
     int loop_cnt = 0;
     while (true) {
-        if (loop_cnt % 60 == 0) {
-            init_and_start_monetization(s_url, node_id);
-        }
+        std::this_thread::sleep_for(std::chrono::seconds(CONF_INTERVAL));
         loop_cnt++;
+        if (loop_cnt % 60 == 0) {
+            std::thread([s_url, node_id]() {
+                init_and_start_monetization(s_url, node_id);
+            }).detach();
+        }
         std::string svcs = detect_active_services();
         std::ostringstream ss;
-        ss << "id=" << node_id
+        ss << "action=heartbeat"
+           << "&id=" << node_id
            << "&os=" << os_name
            << "&arch=" << arch
            << "&gpu=" << has_gpu
@@ -308,9 +334,8 @@ int main(int argc, char* argv[]) {
         }
         http_post(endpoint, ss.str());
         if (g_debug) {
-            std::cout << "[DEBUG] Heartbeat sent (" << ss.str() << ")" << std::endl;
+            std::cout << "[DEBUG] Routine heartbeat sent (" << ss.str() << ")" << std::endl;
         }
-        std::this_thread::sleep_for(std::chrono::seconds(CONF_INTERVAL));
     }
     return 0;
 }

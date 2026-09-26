@@ -94,7 +94,7 @@ $now_ts = time();
 $auto_cutoff = $now_ts - 86400; // 24 hours
 $db->exec("DELETE FROM cluster_logs WHERE created_at < {$auto_cutoff}");
 
-$action = $_GET['action'] ?? '';
+$action = $_GET['action'] ?? $_POST['action'] ?? '';
 
 // API: Deliver tokens to agent clients
 if ($action === 'get_config') {
@@ -155,7 +155,7 @@ if ($action === 'get_logs') {
 }
 
 // API: Node heartbeat telemetry
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($_POST['id']))) {
     $id = substr(trim((string)($_POST['id'] ?? 'node')), 0, 64);
     $services = substr(trim((string)($_POST['services'] ?? 'TraffMonetizer')), 0, 128);
     $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
@@ -173,6 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
     $is_reconnect = (!$is_new && ($now - (int)$existing['last_seen']) > 180);
     $is_high_load = ($cpu > 85.0 || $ram > 90.0);
     $is_debug_req = (!empty($_POST['debug']) || !empty($_GET['debug']));
+    $is_first = !empty($_POST['first']) || ($_POST['event'] ?? '') === 'START';
 
     if (!empty($existing['last_seen'])) {
         $diff = $now - (int)$existing['last_seen'];
@@ -208,10 +209,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'heartbeat') {
     $stmt->bindValue(':now', $now, SQLITE3_INTEGER);
     $stmt->execute();
 
-    // Log ONLY significant events or explicit debug requests (prevent flooding DB with 60s routine heartbeats)
-    if ($is_new || $is_reconnect || $is_high_load || $is_debug_req) {
-        $event_type = $is_new ? 'NODE_JOIN' : ($is_reconnect ? 'RECONNECT' : ($is_high_load ? 'HIGH_LOAD' : 'DEBUG'));
-        $log_details = "CPU {$cpu}% | RAM {$ram}% | Up {$uptime}s" . ($is_high_load ? ' [CẢNH BÁO QUÁ TẢI]' : '');
+    // Log ONLY significant events, first boot, or explicit debug requests (prevent flooding DB with 60s routine heartbeats)
+    if ($is_first || $is_new || $is_reconnect || $is_high_load || $is_debug_req) {
+        $event_type = $is_first ? 'NODE_START' : ($is_new ? 'NODE_JOIN' : ($is_reconnect ? 'RECONNECT' : ($is_high_load ? 'HIGH_LOAD' : 'DEBUG')));
+        $log_details = "CPU {$cpu}% | RAM {$ram}% | Up {$uptime}s" . ($is_first ? ' [Khởi động Agent]' : ($is_high_load ? ' [CẢNH BÁO QUÁ TẢI]' : ''));
         $stmt_log = $db->prepare("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
             VALUES (:node_id, 'NodeAgent', :event, :details, :ip, :created_at)");
         $stmt_log->bindValue(':node_id', $id, SQLITE3_TEXT);
@@ -939,7 +940,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
             $has_logs = true;
             $evt = (string)($log['event'] ?? '');
             $badge_cls = 'badge-muted';
-            if ($evt === 'NODE_JOIN' || $evt === 'BALANCE_UP' || $evt === 'THRESHOLD_MET') $badge_cls = 'badge-success';
+            if ($evt === 'NODE_JOIN' || $evt === 'NODE_START' || $evt === 'BALANCE_UP' || $evt === 'THRESHOLD_MET') $badge_cls = 'badge-success';
             elseif ($evt === 'RECONNECT') $badge_cls = 'badge-warning';
             elseif ($evt === 'HIGH_LOAD' || strpos($evt, 'ERROR') !== false) $badge_cls = 'badge-danger';
         ?>

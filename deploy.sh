@@ -20,9 +20,9 @@ DEFAULT_SERVER_URL="http://turbox.test/cluster.php"
 
 SERVER_URL="$DEFAULT_SERVER_URL"
 [ -n "$2" ] && SERVER_URL="$2"
-[ "$1" != "status" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] && [ "$1" != "debug" ] && [ -n "$1" ] && SERVER_URL="$1"
+[ "$1" != "status" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] && [ "$1" != "debug" ] && [ "$1" != "log" ] && [ -n "$1" ] && SERVER_URL="$1"
 
-# Commands: status | stop | restart | debug
+# Commands: status | stop | restart | debug | log
 case "$1" in
     status)
         PID=""
@@ -67,7 +67,13 @@ case "$1" in
         sh "$0" stop >/dev/null 2>&1 || true
         sleep 1
         ;;
+    log)
+        echo "=== 15 NHẬT KÝ MỚI NHẤT TỪ SERVER ($SERVER_URL) ==="
+        curl -skL --max-time 5 "$SERVER_URL?action=get_logs&limit=15"
+        exit 0
+        ;;
     debug)
+        echo "[DEBUG] Chạy Agent trực tiếp ở foreground kết nối tới: $SERVER_URL"
         "$FULL_BIN_PATH" "$SERVER_URL" --debug
         exit 0
         ;;
@@ -80,6 +86,13 @@ fi
 
 chmod +x "$BIN"
 [ "$OS" = "darwin" ] && xattr -c "$BIN" 2>/dev/null || true
+
+# Kiểm tra kết nối tới Server
+HTTP_CODE=$(curl -skL --max-time 4 -o /dev/null -w "%{http_code}" "$SERVER_URL?action=get_config" 2>/dev/null || echo "000")
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "[CẢNH BÁO] Không thể kết nối tới Server $SERVER_URL (HTTP: $HTTP_CODE)"
+    echo "          Nếu Server chạy ở IP/Port khác, hãy truyền tham số: ./deploy.sh http://IP:PORT/cluster.php"
+fi
 
 # 1. Start cluster telemetry agent
 ALREADY_PID=""
@@ -106,11 +119,13 @@ else
         NEW_PID=$(pgrep -u "$(id -u)" -f "$FULL_BIN_PATH" 2>/dev/null | tr '\\n' ' ' | xargs)
     fi
 
-    if [ -n "$NEW_PID" ]; then
+    if [ -n "$NEW_PID" ] && kill -0 "$NEW_PID" 2>/dev/null; then
         echo "$NEW_PID" > "$PID_FILE"
         echo "[OK] Agent started (PID: $NEW_PID)"
+        echo "[OK] Target Server: $SERVER_URL"
+        echo "[GỢI Ý] Xem log server: ./deploy.sh log  |  Chạy debug: ./deploy.sh debug"
     else
-        echo "[ERROR] Failed to start agent binary."
+        echo "[ERROR] Agent không duy trì được tiến trình. Chạy thử: ./deploy.sh debug"
         exit 1
     fi
 fi

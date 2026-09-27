@@ -45,19 +45,22 @@ $db->exec("CREATE TABLE IF NOT EXISTS workers (
     gpu_found INTEGER,
     services TEXT DEFAULT '',
     total_online_minutes INTEGER DEFAULT 0,
+    service_logs TEXT DEFAULT '',
     last_seen INTEGER
 )");
 
 $chk_col = $db->query("PRAGMA table_info(workers)");
 $has_services_col = false;
+$has_logs_col = false;
 while ($col = $chk_col->fetchArray(SQLITE3_ASSOC)) {
-    if ($col['name'] === 'services') {
-        $has_services_col = true;
-        break;
-    }
+    if ($col['name'] === 'services') $has_services_col = true;
+    if ($col['name'] === 'service_logs') $has_logs_col = true;
 }
 if (!$has_services_col) {
     $db->exec("ALTER TABLE workers ADD COLUMN services TEXT DEFAULT ''");
+}
+if (!$has_logs_col) {
+    $db->exec("ALTER TABLE workers ADD COLUMN service_logs TEXT DEFAULT ''");
 }
 
 // Cached service balances
@@ -158,6 +161,7 @@ if ($action === 'get_logs') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($_POST['id']))) {
     $id = substr(trim((string)($_POST['id'] ?? 'node')), 0, 64);
     $services = substr(trim((string)($_POST['services'] ?? 'TraffMonetizer')), 0, 128);
+    $service_logs = substr(trim((string)($_POST['service_logs'] ?? '')), 0, 500);
     $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
     $os = substr(trim((string)($_POST['os'] ?? 'linux')), 0, 16);
     $arch = substr(trim((string)($_POST['arch'] ?? 'x86_64')), 0, 16);
@@ -167,7 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($
     $gpu = (int)($_POST['gpu'] ?? 0);
     $now = time();
 
-    $existing = $db->querySingle("SELECT last_seen, total_online_minutes FROM workers WHERE id = '" . SQLite3::escapeString($id) . "'", true);
+    $existing = $db->querySingle("SELECT last_seen, total_online_minutes, service_logs FROM workers WHERE id = '" . SQLite3::escapeString($id) . "'", true);
     $acc_mins = (int)($existing['total_online_minutes'] ?? 0);
     $is_new = empty($existing['last_seen']);
     $is_reconnect = (!$is_new && ($now - (int)$existing['last_seen']) > 180);
@@ -182,8 +186,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($
         }
     }
 
-    $stmt = $db->prepare("INSERT INTO workers (id, ip, os, arch, uptime, cpu, ram, gpu_found, services, total_online_minutes, last_seen)
-        VALUES (:id, :ip, :os, :arch, :uptime, :cpu, :ram, :gpu, :services, :acc_mins, :now)
+    $stmt = $db->prepare("INSERT INTO workers (id, ip, os, arch, uptime, cpu, ram, gpu_found, services, total_online_minutes, service_logs, last_seen)
+        VALUES (:id, :ip, :os, :arch, :uptime, :cpu, :ram, :gpu, :services, :acc_mins, :service_logs, :now)
         ON CONFLICT(id) DO UPDATE SET
             ip=excluded.ip,
             os=excluded.os,
@@ -194,6 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($
             gpu_found=excluded.gpu_found,
             services=excluded.services,
             total_online_minutes=excluded.total_online_minutes,
+            service_logs=excluded.service_logs,
             last_seen=excluded.last_seen");
 
     $stmt->bindValue(':id', $id, SQLITE3_TEXT);
@@ -206,8 +211,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($
     $stmt->bindValue(':gpu', $gpu, SQLITE3_INTEGER);
     $stmt->bindValue(':services', $services, SQLITE3_TEXT);
     $stmt->bindValue(':acc_mins', $acc_mins, SQLITE3_INTEGER);
+    $stmt->bindValue(':service_logs', $service_logs, SQLITE3_TEXT);
     $stmt->bindValue(':now', $now, SQLITE3_INTEGER);
     $stmt->execute();
+
+    // Log live engine output to server cluster_logs when fresh engine data arrives
+    if (!empty($service_logs) && $service_logs !== ($existing['service_logs'] ?? '')) {
+        $stmt_elog = $db->prepare("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
+            VALUES (:node_id, 'TraffMonetizer', 'ENGINE_DATA', :details, :ip, :created_at)");
+        $stmt_elog->bindValue(':node_id', $id, SQLITE3_TEXT);
+        $stmt_elog->bindValue(':details', $service_logs, SQLITE3_TEXT);
+        $stmt_elog->bindValue(':ip', $ip, SQLITE3_TEXT);
+        $stmt_elog->bindValue(':created_at', $now, SQLITE3_INTEGER);
+        $stmt_elog->execute();
+    }
 
     // Log ONLY significant events, first boot, or explicit debug requests (prevent flooding DB with 60s routine heartbeats)
     if ($is_first || $is_new || $is_reconnect || $is_high_load || $is_debug_req) {
@@ -796,6 +813,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
           <th>Node ID</th>
           <th>IP Address</th>
           <th>Dịch Vụ Kiếm Tiền</th>
+          <th>Dữ Liệu Thực Tế (Live Log)</th>
           <th>Hệ Điều Hành</th>
           <th>Thời Gian Chạy</th>
           <th>Tải Phần Cứng</th>
@@ -805,7 +823,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
       <tbody>
         <?php if (empty($workers)): ?>
         <tr>
-          <td colspan="8" style="text-align:center; color:var(--dim); padding:24px;">Chưa có máy con nào kết nối.</td>
+          <td colspan="9" style="text-align:center; color:var(--dim); padding:24px;">Chưa có máy con nào kết nối.</td>
         </tr>
         <?php endif; ?>
         <?php foreach ($workers as $w): ?>
@@ -813,6 +831,8 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
           $tot_mins = (int)($w['total_online_minutes'] ?? 0);
           $hours = floor($tot_mins / 60);
           $mins = $tot_mins % 60;
+          $s_text = trim((string)($w['services'] ?? ''));
+          $is_active_svc = !empty($s_text) && strpos($s_text, 'Chua co Engine') === false && strpos($s_text, 'Can Docker') === false && strpos($s_text, 'Cần Docker') === false;
         ?>
         <tr>
           <td>
@@ -825,10 +845,19 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
           <td><strong style="color:#fff; font-family:ui-monospace, monospace;"><?= htmlspecialchars($w['id']) ?></strong></td>
           <td style="font-family:ui-monospace, monospace; color:var(--muted);"><?= htmlspecialchars($w['ip']) ?></td>
           <td>
-            <?php if ($w['services'] === 'Chua co Docker/App'): ?>
-              <span class="badge" style="background:#451a03; color:#f59e0b; font-weight:600; font-size:11px;">⚠️ Cần Docker hoặc App</span>
+            <?php if ($is_active_svc): ?>
+              <span class="badge badge-success" style="background:#064e3b; color:#34d399; font-weight:600; font-size:11px;">🟢 <?= htmlspecialchars($s_text) ?></span>
             <?php else: ?>
-              <span class="badge badge-success" style="background:#064e3b; color:#34d399; font-weight:600; font-size:11px;"><?= htmlspecialchars($w['services'] ?: 'TraffMonetizer') ?></span>
+              <span class="badge" style="background:#451a03; color:#f59e0b; font-weight:600; font-size:11px;">⏳ Đang khởi động Engine...</span>
+            <?php endif; ?>
+          </td>
+          <td style="max-width:280px;">
+            <?php if (!empty($w['service_logs'])): ?>
+              <div style="font-family:ui-monospace, monospace; font-size:11px; color:#38bdf8; background:#0f172a; padding:4px 8px; border-radius:4px; border:1px solid #1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?= htmlspecialchars($w['service_logs']) ?>">
+                🟢 <?= htmlspecialchars($w['service_logs']) ?>
+              </div>
+            <?php else: ?>
+              <span style="color:var(--dim); font-size:11px;">Đang kết nối mạng...</span>
             <?php endif; ?>
           </td>
           <td style="color:var(--muted); text-transform:capitalize;"><?= htmlspecialchars($w['os']) ?> (<?= htmlspecialchars($w['arch']) ?>)</td>
@@ -876,6 +905,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
         <span style="color:var(--muted); font-size:12px; font-weight:600;">🔍 Lọc:</span>
         <select name="filter_service" class="filter-select" onchange="this.form.submit()">
           <option value="ALL">-- Tất cả Dịch vụ & Event --</option>
+          <option value="ENGINE_DATA" <?= $f_svc === 'ENGINE_DATA' ? 'selected' : '' ?>>ENGINE_DATA (Dữ liệu log từ máy con)</option>
           <option value="NodeAgent" <?= $f_svc === 'NodeAgent' ? 'selected' : '' ?>>NodeAgent (Node Workers)</option>
           <option value="NODE_JOIN" <?= $f_svc === 'NODE_JOIN' ? 'selected' : '' ?>>NODE_JOIN (Node mới kết nối)</option>
           <option value="RECONNECT" <?= $f_svc === 'RECONNECT' ? 'selected' : '' ?>>RECONNECT (Node kết nối lại)</option>

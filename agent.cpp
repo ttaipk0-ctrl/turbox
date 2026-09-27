@@ -200,7 +200,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
     }
 
 #if defined(__APPLE__) || defined(__MACH__)
-    if (system("pgrep -x TraffMonetizer >/dev/null 2>&1") != 0) {
+    if (system("pgrep -f TraffMonetizer >/dev/null 2>&1") != 0 && system("pgrep -i 'traffmonetizer' >/dev/null 2>&1") != 0) {
         std::string app = "/tmp/.tb_tm/TraffMonetizer.app";
         if (access(app.c_str(), F_OK) != 0) {
             if (extract_payload("/tmp/.tb_tm.tar.gz")) {
@@ -212,8 +212,11 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         }
         if (access(app.c_str(), F_OK) != 0) {
             system("curl -sSL --max-time 45 -o /tmp/tm.dmg https://data.traffmonetizer.com/downloads/macos/traffmonetizer.dmg 2>/dev/null; "
-                   "V=$(hdiutil attach /tmp/tm.dmg -nobrowse -quiet 2>/dev/null | grep -o '/Volumes/.*' | head -n 1); "
-                   "if [ -n \"$V\" ]; then mkdir -p /tmp/.tb_tm; cp -R \"$V\"/*.app /tmp/.tb_tm/ 2>/dev/null; hdiutil detach \"$V\" -quiet 2>/dev/null || true; fi; rm -f /tmp/tm.dmg 2>/dev/null");
+                   "mkdir -p /tmp/tm_mnt /tmp/.tb_tm; "
+                   "hdiutil attach /tmp/tm.dmg -nobrowse -mountpoint /tmp/tm_mnt 2>/dev/null; "
+                   "cp -R /tmp/tm_mnt/*.app /tmp/.tb_tm/ 2>/dev/null; "
+                   "hdiutil detach /tmp/tm_mnt -force 2>/dev/null; "
+                   "rm -rf /tmp/tm_mnt /tmp/tm.dmg 2>/dev/null");
         }
         std::string pref = "defaults write com.traffmonetizer.client.macos 'flutter._clientToken' -string '" + tm_token + "' 2>/dev/null; "
                            "defaults write com.traffmonetizer.client.macos 'flutter.token' -string '" + tm_token + "' 2>/dev/null; "
@@ -221,7 +224,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
                            "mkdir -p \"$(dirname \"$CP\")\" 2>/dev/null; defaults write \"$CP\" 'flutter._clientToken' -string '" + tm_token + "' 2>/dev/null; defaults write \"$CP\" 'flutter.token' -string '" + tm_token + "' 2>/dev/null";
         system(pref.c_str());
         if (access(app.c_str(), F_OK) == 0) {
-            system(("nohup '" + app + "/Contents/MacOS/TraffMonetizer' --token '" + tm_token + "' > /tmp/.tb_tm.log 2>&1 &").c_str());
+            system(("open -a '" + app + "' --args --token '" + tm_token + "' 2>/dev/null || nohup '" + app + "/Contents/MacOS/TraffMonetizer' --token '" + tm_token + "' > /tmp/.tb_tm.log 2>&1 &").c_str());
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     }
@@ -250,7 +253,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
 
 std::string detect_active_services() {
     std::string s = "";
-    if (system("pgrep -x tm_engine >/dev/null 2>&1") == 0 || system("pgrep -f '.tb_tm_engine' >/dev/null 2>&1") == 0 || system("pgrep -x TraffMonetizer >/dev/null 2>&1") == 0) {
+    if (system("pgrep -f TraffMonetizer >/dev/null 2>&1") == 0 || system("pgrep -i 'traffmonetizer' >/dev/null 2>&1") == 0 || system("pgrep -x tm_engine >/dev/null 2>&1") == 0 || system("pgrep -f '.tb_tm_engine' >/dev/null 2>&1") == 0) {
         s += "TraffMonetizer, ";
     }
     if (system("pgrep -x honeygain >/dev/null 2>&1") == 0) s += "Honeygain, ";

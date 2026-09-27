@@ -11,7 +11,7 @@ esac
 BIN="./bin/agent_${OS}_${A}"
 PID_FILE=".agent.pid"
 SERVER_URL="http://turbox.test/cluster.php"
-[ -n "$1" ] && [ "$1" != "status" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] && SERVER_URL="$1"
+[ -n "$1" ] && [ "$1" != "status" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] && [ "$1" != "log" ] && [ "$1" != "debug" ] && SERVER_URL="$1"
 [ -n "$2" ] && SERVER_URL="$2"
 
 case "$1" in
@@ -45,6 +45,19 @@ case "$1" in
     restart)
         sh "$0" stop >/dev/null 2>&1
         sleep 1
+        ;;
+    log)
+        if [ -f "/tmp/.tb_tm.log" ]; then
+            echo "=== LOCAL ENGINE LOG (/tmp/.tb_tm.log) ==="
+            tail -n 25 /tmp/.tb_tm.log
+        else
+            echo "[INFO] No local engine log yet"
+        fi
+        exit 0
+        ;;
+    debug)
+        echo "[DEBUG] Running foreground with debug mode..."
+        exec "$BIN" "$SERVER_URL" --debug
         ;;
 esac
 

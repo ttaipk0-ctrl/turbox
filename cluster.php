@@ -389,13 +389,13 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
               <span class="badge" style="background:#451a03; color:#f59e0b; font-weight:600; font-size:11px;">⏳ Đang khởi động Engine...</span>
             <?php endif; ?>
           </td>
-          <td style="max-width:320px;">
+          <td style="min-width:280px; max-width:450px;">
             <?php if (!empty($w['service_logs'])): ?>
-              <div style="font-family:ui-monospace, monospace; font-size:11px; color:#38bdf8; background:#0f172a; padding:4px 8px; border-radius:4px; border:1px solid #1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?= htmlspecialchars($w['service_logs']) ?>">
+              <div style="font-family:ui-monospace, monospace; font-size:11px; color:#38bdf8; background:#0f172a; padding:6px 10px; border-radius:6px; border:1px solid #1e293b; word-break:break-all; line-height:1.4;" title="<?= htmlspecialchars($w['service_logs']) ?>">
                 🟢 <?= htmlspecialchars($w['service_logs']) ?>
               </div>
             <?php elseif (!empty($w['step_info'])): ?>
-              <div style="font-family:ui-monospace, monospace; font-size:11px; color:#facc15; background:#0f172a; padding:4px 8px; border-radius:4px; border:1px solid #334155; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?= htmlspecialchars($w['step_info']) ?>">
+              <div style="font-family:ui-monospace, monospace; font-size:11px; color:#facc15; background:#0f172a; padding:6px 10px; border-radius:6px; border:1px solid #334155; word-break:break-all; line-height:1.4;" title="<?= htmlspecialchars($w['step_info']) ?>">
                 📍 <?= htmlspecialchars($w['step_info']) ?>
               </div>
             <?php else: ?>

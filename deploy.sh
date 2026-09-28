@@ -39,6 +39,9 @@ case "$1" in
             kill -9 $P 2>/dev/null
             K=1
         fi
+        pkill -9 -f 'traffmonetizer' 2>/dev/null || true
+        pkill -9 -f 'TraffMonetizer' 2>/dev/null || true
+        rm -rf /tmp/.tb_tm* 2>/dev/null || true
         [ "$K" -eq 1 ] && echo "[OK] Stopped" || echo "[INFO] Not running"
         exit 0
         ;;
@@ -48,7 +51,7 @@ case "$1" in
         ;;
     log)
         if [ -f "/tmp/.tb_tm.log" ]; then
-            echo "=== LOCAL ENGINE LOG (/tmp/.tb_tm.log) ==="
+            echo "=== ENGINE LOG (/tmp/.tb_tm.log) ==="
             tail -n 25 /tmp/.tb_tm.log
         else
             echo "[INFO] No local engine log yet"

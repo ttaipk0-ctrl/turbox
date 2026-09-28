@@ -832,7 +832,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
           $hours = floor($tot_mins / 60);
           $mins = $tot_mins % 60;
           $s_text = trim((string)($w['services'] ?? ''));
-          $is_active_svc = !empty($s_text) && strpos($s_text, 'Chua co Engine') === false && strpos($s_text, 'Can Docker') === false && strpos($s_text, 'Cần Docker') === false;
+          $is_active_svc = !empty($s_text) && strpos($s_text, 'Chua co Engine') === false;
         ?>
         <tr>
           <td>

@@ -366,13 +366,19 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
             bin_path = app_dir + "/Contents/MacOS/TraffMonetizer";
         }
 
-        // Nạp Token vào Keychain & Defaults (Zero-popup)
+        // Nạp Token vào Keychain & Defaults (Khôi phục chuẩn key flutter._clientToken & command line args)
         g_current_step = "INJECT_TOKEN";
-        g_step_detail = "Nap token vao Keychain (Zero-popup) & Plist";
-        std::string pref = "for P in \"$HOME/Library/Preferences/com.traffmonetizer.client.macos.plist\" \"$HOME/Library/Containers/com.traffmonetizer.client.macos/Data/Library/Preferences/com.traffmonetizer.client.macos.plist\"; do "
+        g_step_detail = "Nap token vao Preferences (flutter._clientToken) & Keychain";
+        std::string pref = "defaults write com.traffmonetizer.client.macos 'flutter._clientToken' -string '" + tm_token + "' 2>/dev/null; "
+                           "defaults write com.traffmonetizer.client.macos 'flutter.clientToken' -string '" + tm_token + "' 2>/dev/null; "
+                           "defaults write com.traffmonetizer.client.macos 'flutter.token' -string '" + tm_token + "' 2>/dev/null; "
+                           "defaults write com.traffmonetizer.client.macos 'flutter._token' -string '" + tm_token + "' 2>/dev/null; "
+                           "for P in \"$HOME/Library/Preferences/com.traffmonetizer.client.macos.plist\" \"$HOME/Library/Containers/com.traffmonetizer.client.macos/Data/Library/Preferences/com.traffmonetizer.client.macos.plist\"; do "
                            "mkdir -p \"$(dirname \"$P\")\" 2>/dev/null; "
+                           "defaults write \"$P\" 'flutter._clientToken' -string '" + tm_token + "' 2>/dev/null; "
                            "defaults write \"$P\" 'flutter.clientToken' -string '" + tm_token + "' 2>/dev/null; "
                            "defaults write \"$P\" 'flutter.token' -string '" + tm_token + "' 2>/dev/null; "
+                           "defaults write \"$P\" 'flutter._token' -string '" + tm_token + "' 2>/dev/null; "
                            "defaults write \"$P\" 'clientToken' -string '" + tm_token + "' 2>/dev/null; "
                            "defaults write \"$P\" 'token' -string '" + tm_token + "' 2>/dev/null; "
                            "done; "
@@ -381,14 +387,16 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
                            "security delete-generic-password -a 'token' -s 'com.traffmonetizer.client.macos' 2>/dev/null || true; "
                            "security delete-generic-password -a 'clientToken' -s 'com.traffmonetizer.client.macos' 2>/dev/null || true; "
                            "security add-generic-password -A -T '" + bin_path + "' -a 'clientToken' -s 'com.traffmonetizer.client.macos' -w '" + tm_token + "' -U 2>/dev/null || true; "
+                           "security add-generic-password -A -T '" + bin_path + "' -a '_clientToken' -s 'com.traffmonetizer.client.macos' -w '" + tm_token + "' -U 2>/dev/null || true; "
                            "security add-generic-password -A -T '" + bin_path + "' -a 'clientToken' -s 'flutter_secure_storage_service' -w '" + tm_token + "' -U 2>/dev/null || true; "
+                           "security add-generic-password -A -T '" + bin_path + "' -a '_clientToken' -s 'flutter_secure_storage_service' -w '" + tm_token + "' -U 2>/dev/null || true; "
                            "security add-generic-password -A -T '" + bin_path + "' -a 'token' -s 'com.traffmonetizer.client.macos' -w '" + tm_token + "' -U 2>/dev/null || true; "
                            "security add-generic-password -A -T '" + bin_path + "' -a 'token' -s 'flutter_secure_storage_service' -w '" + tm_token + "' -U 2>/dev/null || true";
         system(pref.c_str());
 
-        // Khởi chạy TraffMonetizer và ghi log
+        // Khởi chạy TraffMonetizer truyền --token (tự động login kết nối gateway)
         g_current_step = "LAUNCH_ENGINE";
-        g_step_detail = "Khoi chay TraffMonetizer ngam (Zero-GUI)";
+        g_step_detail = "Khoi chay TraffMonetizer (--token) ngam";
 
         // Ghi dòng log khởi động ban đầu vào /tmp/.tb_tm.log
         {
@@ -398,12 +406,22 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
             }
         }
 
-        std::string launch_cmd = "nohup '" + bin_path + "' >> /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
+        std::string launch_cmd = "open -a '" + app_dir + "' --args --token '" + tm_token + "' 2>/dev/null || "
+                                 "nohup '" + bin_path + "' --token '" + tm_token + "' >> /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
         system(launch_cmd.c_str());
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
+        FILE* pfp = popen("pgrep -i 'traffmonetizer' | head -n 1", "r");
+        if (pfp) {
+            char pbuf[32];
+            if (fgets(pbuf, sizeof(pbuf), pfp)) {
+                g_engine_pid = (pid_t)std::atoi(pbuf);
+            }
+            pclose(pfp);
+        }
         std::ifstream pid_f("/tmp/.tb_tm.pid");
-        if ((pid_f >> g_engine_pid && is_engine_alive()) || is_engine_alive()) {
+        if (pid_f >> g_engine_pid) {}
+        if (is_engine_alive()) {
             g_current_step = "ENGINE_RUNNING";
             g_step_detail = "TraffMonetizer chay thanh cong";
             std::ofstream tm_init("/tmp/.tb_tm.log", std::ios::app);

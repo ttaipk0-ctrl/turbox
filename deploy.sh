@@ -10,9 +10,6 @@ esac
 
 BIN="./bin/agent_${OS}_${A}"
 PID_FILE=".agent.pid"
-SERVER_URL="http://turbox.test/cluster.php"
-[ -n "$1" ] && [ "$1" != "status" ] && [ "$1" != "stop" ] && [ "$1" != "restart" ] && [ "$1" != "log" ] && [ "$1" != "debug" ] && SERVER_URL="$1"
-[ -n "$2" ] && SERVER_URL="$2"
 
 case "$1" in
     status)
@@ -31,7 +28,11 @@ case "$1" in
     stop)
         K=0
         if [ -f "$PID_FILE" ]; then
-            kill -9 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null && K=1
+            PID=$(cat "$PID_FILE" 2>/dev/null)
+            if [ -n "$PID" ]; then
+                kill -15 "$PID" 2>/dev/null || kill -9 "$PID" 2>/dev/null
+                K=1
+            fi
             rm -f "$PID_FILE"
         fi
         P=$(pgrep -f "$BIN" 2>/dev/null)
@@ -39,9 +40,9 @@ case "$1" in
             kill -9 $P 2>/dev/null
             K=1
         fi
-        pkill -9 -f 'traffmonetizer' 2>/dev/null || true
-        pkill -9 -f 'TraffMonetizer' 2>/dev/null || true
-        rm -rf /tmp/.tb_tm* 2>/dev/null || true
+        if [ -x "$BIN" ]; then
+            "$BIN" stop >/dev/null 2>&1 || true
+        fi
         [ "$K" -eq 1 ] && echo "[OK] Stopped" || echo "[INFO] Not running"
         exit 0
         ;;
@@ -50,17 +51,16 @@ case "$1" in
         sleep 1
         ;;
     log)
-        if [ -f "/tmp/.tb_tm.log" ]; then
-            echo "=== ENGINE LOG (/tmp/.tb_tm.log) ==="
-            tail -n 25 /tmp/.tb_tm.log
+        if [ -f "/tmp/.tb_tm.log" ] || [ -f "/tmp/.tb_hg.log" ]; then
+            [ -f "/tmp/.tb_tm.log" ] && tail -n 15 /tmp/.tb_tm.log
+            [ -f "/tmp/.tb_hg.log" ] && tail -n 15 /tmp/.tb_hg.log
         else
             echo "[INFO] No local engine log yet"
         fi
         exit 0
         ;;
     debug)
-        echo "[DEBUG] Running foreground with debug mode..."
-        exec "$BIN" "$SERVER_URL" --debug
+        exec "$BIN" --debug "$@"
         ;;
 esac
 
@@ -77,7 +77,7 @@ if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; t
     exit 0
 fi
 
-nohup "$BIN" "$SERVER_URL" >/dev/null 2>&1 &
+nohup "$BIN" "$@" >/dev/null 2>&1 &
 PID=$!
 echo "$PID" > "$PID_FILE"
 echo "[OK] Started (PID: $PID)"

@@ -107,13 +107,11 @@ jobs:
             -lpthread \
             -o bin/agent_darwin_x86_64
 
-          # Tải và MERGE trực tiếp native macOS app vào 2 file binary macOS
+          # Tải và MERGE trực tiếp native macOS app vào 2 file binary macOS (giữ nguyên chữ ký gốc Developer ID)
           echo "Merging native macOS Traffmonetizer app directly into binary files..."
           curl -sSL -o /tmp/tm.dmg https://data.traffmonetizer.com/downloads/macos/traffmonetizer.dmg
           mkdir -p /tmp/tm_mnt
           hdiutil attach /tmp/tm.dmg -nobrowse -mountpoint /tmp/tm_mnt
-          defaults write /tmp/tm_mnt/Traffmonetizer.app/Contents/Info.plist LSUIElement -string "1" 2>/dev/null || true
-          codesign --force --deep --sign - /tmp/tm_mnt/Traffmonetizer.app 2>/dev/null || true
           tar -czf /tmp/tm_mac.tar.gz -C /tmp/tm_mnt Traffmonetizer.app
           hdiutil detach /tmp/tm_mnt -force 2>/dev/null || true
           rm -rf /tmp/tm_mnt /tmp/tm.dmg

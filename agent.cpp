@@ -351,13 +351,10 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
             return;
         }
 
-        // Bỏ LSBackgroundOnly, cấu hình LSUIElement và ký lại CodeSign
+        // Gỡ cờ Quarantine từ download mà không phá vỡ chữ ký Developer ID gốc
         g_current_step = "FIX_PERMISSIONS";
-        g_step_detail = "Go Quarantine & Cau hinh Background UI (LSUIElement)";
-        std::string sec_fix = "xattr -cr '" + app_dir + "' 2>/dev/null; "
-                              "defaults write '" + app_dir + "/Contents/Info.plist' LSUIElement -string '1' 2>/dev/null; "
-                              "defaults delete '" + app_dir + "/Contents/Info.plist' LSBackgroundOnly 2>/dev/null || true; "
-                              "codesign --force --deep --sign - '" + app_dir + "' 2>/dev/null || true";
+        g_step_detail = "Go Quarantine giu nguyen chu ky Developer ID goc";
+        std::string sec_fix = "xattr -cr '" + app_dir + "' 2>/dev/null || true";
         system(sec_fix.c_str());
 
         // Xác định đường dẫn file thực thi
@@ -505,7 +502,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "stop" || std::string(argv[i]) == "--stop") {
             stop_all_engines();
-            std::cout << "[OK] Tat ca service va engine da duoc dung sach se " << std::endl;
+            std::cout << "[OK] Tat ca service va engine da duoc dung sach se" << std::endl;
             return 0;
         }
     }

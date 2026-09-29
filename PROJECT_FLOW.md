@@ -25,11 +25,11 @@
    - Engine kiếm tiền được GitHub Actions đóng gói và merge trực tiếp vào đuôi 4 file binary này.
 
 4. agent.cpp LÀ TRUNG TÂM ĐIỀU PHỐI ĐỘC LẬP TRÊN WORKER (Thuật toán tinh gọn)
-   - Tự đọc chính nó hoặc kéo layer native để trích xuất payload engine ra thư mục đệm /tmp/ (/tmp/.tb_tm, /tmp/.tb_hg).
-   - Hỗ trợ chạy đa engine kiếm tiền (TraffMonetizer qua Token, Honeygain qua Email/Password tài khoản) native hoàn toàn (Zero-Docker).
-   - Tự động bắt log thực tế từ các engine (/tmp/.tb_tm.log, /tmp/.tb_hg.log) để gửi về Server giúp theo dõi kết nối & lưu lượng.
+   - Tự đọc chính nó để trích xuất payload engine ra thư mục đệm /tmp/.
+   - Nạp Token tự động và chạy engine native (Zero-Docker).
+   - Tự động bắt log thực tế từ engine (/tmp/.tb_tm.log) để gửi về Server giúp theo dõi kết nối & lưu lượng.
    - Gửi Telemetry phần cứng kèm Log Engine định kỳ 15 giây về cluster.php.
-   - Tự hồi sinh (auto-revive) cả hai engine nếu bị crash hoặc tắt.
+   - Tự hồi sinh (auto-revive) engine nếu bị crash hoặc tắt.
 
 5. cluster.php LÀ MASTER SERVER & DASHBOARD ĐIỀU HÀNH
    - Lưu trữ trạng thái worker (cluster_state.json), nhật ký (cluster_logs.txt).
@@ -52,4 +52,4 @@
 ## III. QUY TRÌNH VẬN HÀNH (WORKFLOW)
 1. GitHub Actions Build: Biên dịch agent.cpp -> Tải engine -> Merge payload -> Đẩy 4 file vào bin/.
 2. Triển khai máy con: git pull && ./deploy.sh
-3. Binary khởi chạy: Tự bung engine ra /tmp/ -> Nạp token TraffMonetizer & tài khoản Honeygain -> Chạy native song song -> Gửi Telemetry lên cluster.php.
+3. Binary khởi chạy: Tự bung engine ra /tmp/ -> Nạp token -> Chạy native -> Gửi Telemetry lên cluster.php.

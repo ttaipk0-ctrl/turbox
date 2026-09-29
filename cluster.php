@@ -411,6 +411,35 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
       </tbody>
     </table>
   </div>
+
+  <?php
+    $res_recent_logs = $db->query("SELECT * FROM cluster_logs ORDER BY id DESC LIMIT 30");
+    $recent_logs = [];
+    while ($rl = $res_recent_logs->fetchArray(SQLITE3_ASSOC)) {
+        $recent_logs[] = $rl;
+    }
+  ?>
+  <div style="background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:28px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h3 style="font-size:13px; font-weight:700; color:var(--text); margin:0;">NHẬT KÝ HOẠT ĐỘNG CLUSTER (LIVE SERVER LOGS)</h3>
+      <a href="cluster.php?action=purge_logs" style="font-size:11px; color:#f87171; text-decoration:none;" onclick="return confirm('Xóa sạch log?')">[Xóa Log]</a>
+    </div>
+    <div style="font-family:ui-monospace, monospace; font-size:11px; background:#0b1120; border:1px solid var(--border); border-radius:6px; padding:12px; max-height:260px; overflow-y:auto; line-height:1.6;">
+      <?php if (empty($recent_logs)): ?>
+        <span style="color:var(--dim);">Chưa có log từ worker. Khởi động worker để ghi nhận dữ liệu.</span>
+      <?php else: ?>
+        <?php foreach ($recent_logs as $log_item): ?>
+          <div style="border-bottom:1px solid #1e293b; padding:3px 0;">
+            <span style="color:var(--dim); font-size:10px;">[<?= date('H:i:s', (int)$log_item['created_at']) ?>]</span>
+            <span style="color:#38bdf8; font-weight:600;">[<?= htmlspecialchars($log_item['node_id']) ?>]</span>
+            <span style="color:#f59e0b; font-weight:600;">[<?= htmlspecialchars($log_item['event']) ?>]</span>
+            <span style="color:#cbd5e1;"><?= htmlspecialchars($log_item['details']) ?></span>
+            <span style="color:var(--dim); font-size:10px;">(<?= htmlspecialchars($log_item['ip']) ?>)</span>
+          </div>
+        <?php endforeach; ?>
+      <?php endif; ?>
+    </div>
+  </div>
 </div>
 </body>
 </html>

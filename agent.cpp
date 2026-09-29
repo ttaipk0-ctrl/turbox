@@ -505,7 +505,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "stop" || std::string(argv[i]) == "--stop") {
             stop_all_engines();
-            std::cout << "[OK] Tat ca service va engine da duoc dung sach se" << std::endl;
+            std::cout << "[OK] Tat ca service va engine da duoc dung sach se " << std::endl;
             return 0;
         }
     }

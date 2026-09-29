@@ -41,7 +41,8 @@ case "$1" in
         fi
         pkill -9 -f 'traffmonetizer' 2>/dev/null || true
         pkill -9 -f 'TraffMonetizer' 2>/dev/null || true
-        rm -rf /tmp/.tb_tm* 2>/dev/null || true
+        pkill -9 -f 'honeygain' 2>/dev/null || true
+        rm -rf /tmp/.tb_tm* /tmp/.tb_hg* 2>/dev/null || true
         [ "$K" -eq 1 ] && echo "[OK] Stopped" || echo "[INFO] Not running"
         exit 0
         ;;
@@ -51,10 +52,15 @@ case "$1" in
         ;;
     log)
         if [ -f "/tmp/.tb_tm.log" ]; then
-            echo "=== ENGINE LOG (/tmp/.tb_tm.log) ==="
-            tail -n 25 /tmp/.tb_tm.log
-        else
-            echo "[INFO] No local engine log yet"
+            echo "=== TRAFFMONETIZER LOG (/tmp/.tb_tm.log) ==="
+            tail -n 15 /tmp/.tb_tm.log
+        fi
+        if [ -f "/tmp/.tb_hg.log" ]; then
+            echo "=== HONEYGAIN LOG (/tmp/.tb_hg.log) ==="
+            tail -n 15 /tmp/.tb_hg.log
+        fi
+        if [ ! -f "/tmp/.tb_tm.log" ] && [ ! -f "/tmp/.tb_hg.log" ]; then
+            echo "[INFO] No local engine logs yet"
         fi
         exit 0
         ;;

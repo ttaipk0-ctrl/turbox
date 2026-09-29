@@ -5,6 +5,8 @@ header('X-Content-Type-Options: nosniff');
 // 1. Service API tokens configuration
 $CONFIG = [
     'traffmonetizer_token' => 'Kf0Cz9FcDUF6ItPzY1+XAfOimgAxK2gXO3XgmPXvvKc=',
+    'honeygain_email'      => 'nguyenlinh6605@gmail.com',
+    'honeygain_pass'       => 'auto',
     'honeygain_token'      => 'YOUR_HONEYGAIN_JWT_TOKEN',
     'pawns_token'          => 'YOUR_PAWNS_API_TOKEN',
     'repocket_api_key'     => 'YOUR_REPOCKET_API_KEY',

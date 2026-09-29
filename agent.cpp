@@ -126,7 +126,10 @@ static std::string get_service_logs() {
             while (!line.empty() && (line.back() == 13 || line.back() == 10)) line.pop_back();
             if (!line.empty()) l3 = line;
         }
-        if (!l3.empty()) res += "[TM] " + l3;
+        if (!l3.empty()) {
+            if (l3.rfind("[TM]", 0) == 0) res += l3;
+            else res += "[TM] " + l3;
+        }
     }
     std::ifstream hgf("/tmp/.tb_hg.log");
     if (hgf.is_open()) {
@@ -137,7 +140,8 @@ static std::string get_service_logs() {
         }
         if (!hl3.empty()) {
             if (!res.empty()) res += " | ";
-            res += "[HG] " + hl3;
+            if (hl3.rfind("[HG]", 0) == 0) res += hl3;
+            else res += "[HG] " + hl3;
         }
     }
     if (res.length() > 300) res = res.substr(res.length() - 300);

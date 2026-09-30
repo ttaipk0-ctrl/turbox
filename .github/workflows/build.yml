@@ -132,20 +132,24 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-binaries
-          path: bin/
+          path: bin
+          merge-multiple: true
 
       - name: Download macOS Binaries
         uses: actions/download-artifact@v4
         with:
           name: macos-binaries
-          path: bin/
+          path: bin
+          merge-multiple: true
 
       - name: Commit Binaries into Git Repo
         run: |
           chmod +x bin/*
+          echo "=== Binaries in bin/ ==="
+          ls -la bin/
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add bin/
+          git add bin/agent_*
           git commit -m "Auto-build native binaries for Linux & macOS [skip ci]" || echo "No changes"
           git pull --rebase origin main || true
           git push origin main

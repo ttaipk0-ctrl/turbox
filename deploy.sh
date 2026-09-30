@@ -1,4 +1,5 @@
 #!/bin/sh
+# Turbox Cluster - Silent Production Runner (Compliant with PROJECT_FLOW.md)
 cd "$(dirname "$0")" || exit 1
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -52,6 +53,10 @@ case "$1" in
         sleep 1
         exec sh "$0"
         ;;
+    log|logs)
+        [ -f "$LOG_FILE" ] && cat "$LOG_FILE" || echo "[INFO] No log found"
+        exit 0
+        ;;
 esac
 
 if [ ! -f "$BIN" ]; then
@@ -79,4 +84,12 @@ fi
 
 echo "[ERROR] Failed to start $BIN"
 rm -f "$PID_FILE"
+
+# Tự động in chi tiết lỗi ra màn hình ngay lập tức (không bắt người dùng gõ manual)
+if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
+    cat "$LOG_FILE"
+else
+    # Nếu nohup chưa ghi kịp hoặc OS kill ngay khi nạp dynamic linker, chạy trực tiếp để in lỗi OS (GLIBC, format, lib...)
+    "$BIN" 2>&1
+fi
 exit 1

@@ -33,7 +33,7 @@ jobs:
           g++ -O3 -std=c++17 agent.cpp \
             -DCONF_SERVER_URL="\"$SERVER\"" \
             -DCONF_INTERVAL=15 \
-            -static \
+            -static-libstdc++ -static-libgcc \
             -lpthread -s \
             -o bin/agent_linux_x86_64
 
@@ -41,7 +41,7 @@ jobs:
           aarch64-linux-gnu-g++ -O3 -std=c++17 agent.cpp \
             -DCONF_SERVER_URL="\"$SERVER\"" \
             -DCONF_INTERVAL=15 \
-            -static \
+            -static-libstdc++ -static-libgcc \
             -lpthread -s \
             -o bin/agent_linux_arm64
 

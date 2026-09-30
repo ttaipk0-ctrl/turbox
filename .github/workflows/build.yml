@@ -14,14 +14,15 @@ permissions:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
+    container: debian:bullseye-slim
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Compilers & UPX
+      - name: Install Compilers & Dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends upx-ucl g++-aarch64-linux-gnu
+          apt-get update -qq
+          apt-get install -y --no-install-recommends g++ g++-aarch64-linux-gnu ca-certificates python3 curl
 
       - name: Compile Linux Binaries
         run: |
@@ -44,10 +45,6 @@ jobs:
             -static-libstdc++ -static-libgcc \
             -lpthread -s \
             -o bin/agent_linux_arm64
-
-          # Fast UPX compression (chỉ mất ~0.5s thay vì hàng chục phút nếu dùng ultra-brute)
-          upx -9 -q bin/agent_linux_x86_64 2>/dev/null || true
-          upx -9 -q bin/agent_linux_arm64 2>/dev/null || true
 
           # Tải và MERGE trực tiếp native Linux engine vào 2 file binary Linux (siêu tốc, không re-compress)
           echo "Merging native Linux self-contained engine directly into binary files..."

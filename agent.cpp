@@ -23,7 +23,7 @@
 #endif
 
 #ifndef CONF_SERVER_URL
-#define CONF_SERVER_URL "http://turbox.test/cluster.php"
+#define CONF_SERVER_URL "http://65.20.91.208/turbox_server.php"
 #endif
 
 #ifndef CONF_INTERVAL

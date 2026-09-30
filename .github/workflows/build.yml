@@ -17,6 +17,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compile Linux Binaries inside Ubuntu 20.04 Container (GLIBC 2.31 Baseline)
         run: |
@@ -77,17 +79,25 @@ jobs:
             ubuntu:20.04 \
             /run_build.sh
 
-      - name: Upload Linux Binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-binaries
-          path: bin/agent_linux_*
+      - name: Commit Linux Binaries Directly
+        run: |
+          chmod +x bin/agent_linux_*
+          echo "=== Linux Binaries Built ==="
+          ls -lh bin/agent_linux_*
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f bin/agent_linux_*
+          git commit -m "Auto-build native Linux binaries (Debian 11 / Ubuntu compatible) [skip ci]" || echo "No changes"
+          git pull --rebase origin main || true
+          git push origin main
 
   build-macos:
     runs-on: macos-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compile macOS Binaries (Apple Silicon + Intel)
         run: |
@@ -122,44 +132,14 @@ jobs:
           python3 -c "import struct, os; p = open('/tmp/tm_mac.tar.gz', 'rb').read(); foot = struct.pack('<Q', len(p)) + b'TURBOX_BUNDLE\x00\x00\x00'; [open(b, 'ab').write(p + foot) for b in ['bin/agent_darwin_x86_64', 'bin/agent_darwin_arm64'] if os.path.exists(b)]"
           rm -f /tmp/tm_mac.tar.gz
 
-      - name: Upload macOS Binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-binaries
-          path: bin/agent_darwin_*
-
-  commit-all:
-    needs: [build-linux, build-macos]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download Linux Binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-binaries
-          path: /tmp/linux-bin
-
-      - name: Download macOS Binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-binaries
-          path: /tmp/macos-bin
-
-      - name: Commit Binaries into Git Repo
+      - name: Commit macOS Binaries Directly
         run: |
-          mkdir -p bin
-          find /tmp/linux-bin -type f -name "agent_*" -exec cp -fv {} bin/ \;
-          find /tmp/macos-bin -type f -name "agent_*" -exec cp -fv {} bin/ \;
-          chmod +x bin/*
-          echo "=== Verified Binaries in bin/ ==="
-          ls -lh bin/
+          chmod +x bin/agent_darwin_*
+          echo "=== macOS Binaries Built ==="
+          ls -lh bin/agent_darwin_*
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f bin/agent_*
-          git commit -m "Auto-build native binaries for Linux & macOS [skip ci]" || echo "No changes"
+          git add -f bin/agent_darwin_*
+          git commit -m "Auto-build native macOS binaries [skip ci]" || echo "No changes"
           git pull --rebase origin main || true
           git push origin main

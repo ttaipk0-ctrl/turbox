@@ -149,7 +149,8 @@ if ($action === 'get_hg_credentials') {
 // API: Manual log purge action
 if ($action === 'purge_logs') {
     $db->exec("DELETE FROM cluster_logs");
-    header('Location: cluster.php?msg=purged');
+    $self = basename($_SERVER['PHP_SELF'] ?? 'turbox_server.php');
+    header("Location: {$self}?msg=purged");
     exit;
 }
 
@@ -441,7 +442,7 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
   <div style="background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:28px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
       <h3 style="font-size:13px; font-weight:700; color:var(--text); margin:0;">NHẬT KÝ HOẠT ĐỘNG CLUSTER (LIVE SERVER LOGS)</h3>
-      <a href="cluster.php?action=purge_logs" style="font-size:11px; color:#f87171; text-decoration:none;" onclick="return confirm('Xóa sạch log?')">[Xóa Log]</a>
+      <a href="?action=purge_logs" style="font-size:11px; color:#f87171; text-decoration:none;" onclick="return confirm('Xóa sạch log?')">[Xóa Log]</a>
     </div>
     <div style="font-family:ui-monospace, monospace; font-size:11px; background:#0b1120; border:1px solid var(--border); border-radius:6px; padding:12px; max-height:260px; overflow-y:auto; line-height:1.6;">
       <?php if (empty($recent_logs)): ?>

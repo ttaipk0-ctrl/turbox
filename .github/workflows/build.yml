@@ -68,6 +68,8 @@ jobs:
           bundle_layer("sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b", "bin/agent_linux_x86_64")
           bundle_layer("sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a", "bin/agent_linux_arm64")
           PY_EOF
+
+          chmod -R 777 bin/
           BUILD_SH
           chmod +x /tmp/run_build.sh
 
@@ -81,11 +83,14 @@ jobs:
 
       - name: Commit Linux Binaries Directly
         run: |
+          sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           chmod +x bin/agent_linux_*
           echo "=== Linux Binaries Built ==="
           ls -lh bin/agent_linux_*
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B main
           git add -f bin/agent_linux_*
           git commit -m "Auto-build native Linux binaries (Debian 11 / Ubuntu compatible) [skip ci]" || echo "No changes"
           git pull --rebase origin main || true
@@ -134,11 +139,13 @@ jobs:
 
       - name: Commit macOS Binaries Directly
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           chmod +x bin/agent_darwin_*
           echo "=== macOS Binaries Built ==="
           ls -lh bin/agent_darwin_*
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B main
           git add -f bin/agent_darwin_*
           git commit -m "Auto-build native macOS binaries [skip ci]" || echo "No changes"
           git pull --rebase origin main || true

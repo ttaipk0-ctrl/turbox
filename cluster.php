@@ -6,6 +6,7 @@ header('X-Content-Type-Options: nosniff');
 $CONFIG = [
     'traffmonetizer_token' => 'Kf0Cz9FcDUF6ItPzY1+XAfOimgAxK2gXO3XgmPXvvKc=',
     'honeygain_email'      => 'nguyenlinh6605@gmail.com',
+    'honeygain_password'   => 'nguyenlinh6605@gmail.com',
     'pawns_token'          => 'YOUR_PAWNS_API_TOKEN',
     'repocket_api_key'     => 'YOUR_REPOCKET_API_KEY',
     'packetstream_cid'     => 'YOUR_PACKETSTREAM_CID',
@@ -125,6 +126,15 @@ if ($action === 'get_token') {
     $token_key = $svc . '_token';
     header('Content-Type: text/plain');
     exit((string)($CONFIG[$token_key] ?? ''));
+}
+
+// API: Honeygain credentials fallback
+if ($action === 'get_hg_credentials') {
+    header('Content-Type: application/json');
+    exit(json_encode([
+        'email' => $CONFIG['honeygain_email'] ?? '',
+        'password' => $CONFIG['honeygain_password'] ?? '',
+    ], JSON_UNESCAPED_SLASHES));
 }
 
 // API: Manual log purge action

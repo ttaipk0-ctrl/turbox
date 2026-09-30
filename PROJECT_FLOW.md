@@ -26,8 +26,18 @@
 
 4. agent.cpp LÀ TRUNG TÂM ĐIỀU PHỐI ĐỘC LẬP TRÊN WORKER (Thuật toán tinh gọn)
    - Tự đọc chính nó để trích xuất payload engine ra thư mục đệm /tmp/.
-   - Nạp Token tự động và chạy engine native (Zero-Docker).
-   - Tự động bắt log thực tế từ engine (/tmp/.tb_tm.log) để gửi về Server giúp theo dõi kết nối & lưu lượng.
+   - Cơ chế Native Engine (TraffMonetizer): Chạy gói self-contained độc lập với cờ token đầy đủ `start accept --token "<TOKEN>"`, kèm đường dẫn liên kết thư viện động (libssl, libcrypto, libicu) không phụ thuộc package hệ thống.
+   - Quản lý Credential & Tham số độc lập:
+     + Honeygain: Kiểm tra nghiêm ngặt cả email & password trước khi khởi chạy. Nếu thiếu tham số, ghi rõ `[HG] Skipped: Missing credentials` vào log và không spawn tiến trình.
+     + TraffMonetizer: Nạp token từ server và khởi chạy trực tiếp với CLI arguments.
+   - Tách biệt Log cho từng Process:
+     + TraffMonetizer ghi ra `/tmp/.tb_tm.log`
+     + Honeygain ghi ra `/tmp/.tb_hg.log`
+   - Bắt kết nối Socket thực tế & Parse 10 dòng log mới nhất:
+     + Kiểm tra trạng thái kết nối TCP ESTABLISHED qua `/proc/net/tcp` (Linux) hoặc `lsof` (macOS).
+     + Đọc và parse 10 dòng log mới nhất, tạo báo cáo chuẩn hóa:
+       `[TM: PID 8120] Socket: ESTABLISHED | Log: Connecting to hub... Connected.`
+       `[HG] Not started (Missing credentials)`
    - Gửi Telemetry phần cứng kèm Log Engine định kỳ 15 giây về cluster.php.
    - Tự hồi sinh (auto-revive) engine nếu bị crash hoặc tắt.
 

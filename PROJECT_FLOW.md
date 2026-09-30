@@ -41,11 +41,11 @@
    - Gửi Telemetry phần cứng kèm Log Engine định kỳ 15 giây về cluster.php.
    - Tự hồi sinh (auto-revive) engine nếu bị crash hoặc tắt.
 
-5. cluster.php LÀ MASTER SERVER & DASHBOARD ĐIỀU HÀNH
-   - Lưu trữ trạng thái worker (cluster_state.json), nhật ký (cluster_logs.txt).
+5. cluster.php & turbox_server.php LÀ MASTER SERVER & DASHBOARD ĐIỀU HÀNH
+   - Lưu trữ trạng thái worker và dữ liệu trong SQLite: file database `cluster.db` nằm trong thư mục `turbox/` cùng cấp với file PHP (tự động tạo nếu chưa có).
    - Tiếp nhận và hiển thị log engine trực tiếp (Live Output) trên từng worker node.
    - Quản lý tập trung Token các mạng kiếm tiền, tính toán tài chính, dự phóng và ETA rút tiền.
-   - Web UI thời gian thực, không cần database bên ngoài (flat-file an toàn và siêu tốc).
+   - Web UI thời gian thực, không cần database bên ngoài (SQLite độc lập an toàn và siêu tốc).
 
 ---
 

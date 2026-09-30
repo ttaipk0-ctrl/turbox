@@ -27,7 +27,7 @@ jobs:
         run: |
           mkdir -p bin
           SERVER="${{ secrets.CONF_SERVER_URL }}"
-          [ -z "$SERVER" ] && SERVER="http://turbox.test/cluster.php"
+          [ -z "$SERVER" ] && SERVER="http://65.20.91.208/turbox_server.php"
 
           # Build Linux x86_64
           g++ -O3 -std=c++17 agent.cpp \
@@ -108,7 +108,7 @@ jobs:
         run: |
           mkdir -p bin
           SERVER="${{ secrets.CONF_SERVER_URL }}"
-          [ -z "$SERVER" ] && SERVER="http://turbox.test/cluster.php"
+          [ -z "$SERVER" ] && SERVER="http://65.20.91.208/turbox_server.php"
 
           # Build macOS ARM64 (Apple Silicon M1/M2/M3/M4)
           clang++ -O3 -std=c++17 agent.cpp \

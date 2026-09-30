@@ -31,7 +31,16 @@ $PAYOUT_THRESHOLDS = [
     'Nodepay DePIN'  => ['min' => 10.0, 'unit' => 'POINTS', 'method' => 'Solana On-Chain Claim']
 ];
 
-$db = new SQLite3(__DIR__ . '/cluster.db');
+// Database file: nằm trong thư mục 'turbox' cùng thư mục file PHP (tự tạo nếu chưa có)
+$dbDir = __DIR__ . '/turbox';
+if (!is_dir($dbDir)) {
+    @mkdir($dbDir, 0775, true);
+}
+if (file_exists(__DIR__ . '/cluster.db') && !file_exists($dbDir . '/cluster.db')) {
+    @rename(__DIR__ . '/cluster.db', $dbDir . '/cluster.db');
+}
+$dbPath = is_dir($dbDir) ? ($dbDir . '/cluster.db') : (__DIR__ . '/cluster.db');
+$db = new SQLite3($dbPath);
 $db->busyTimeout(5000);
 
 // Worker node telemetry

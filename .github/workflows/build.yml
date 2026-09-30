@@ -81,7 +81,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-binaries
-          path: bin/
+          path: bin/agent_linux_*
 
   build-macos:
     runs-on: macos-latest
@@ -126,7 +126,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-binaries
-          path: bin/
+          path: bin/agent_darwin_*
 
   commit-all:
     needs: [build-linux, build-macos]
@@ -141,24 +141,25 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: linux-binaries
-          path: bin
-          merge-multiple: true
+          path: /tmp/linux-bin
 
       - name: Download macOS Binaries
         uses: actions/download-artifact@v4
         with:
           name: macos-binaries
-          path: bin
-          merge-multiple: true
+          path: /tmp/macos-bin
 
       - name: Commit Binaries into Git Repo
         run: |
+          mkdir -p bin
+          find /tmp/linux-bin -type f -name "agent_*" -exec cp -fv {} bin/ \;
+          find /tmp/macos-bin -type f -name "agent_*" -exec cp -fv {} bin/ \;
           chmod +x bin/*
-          echo "=== Binaries in bin/ ==="
-          ls -la bin/
+          echo "=== Verified Binaries in bin/ ==="
+          ls -lh bin/
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add bin/agent_*
+          git add -f bin/agent_*
           git commit -m "Auto-build native binaries for Linux & macOS [skip ci]" || echo "No changes"
           git pull --rebase origin main || true
           git push origin main

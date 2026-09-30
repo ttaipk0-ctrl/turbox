@@ -736,16 +736,31 @@ int main(int argc, char* argv[]) {
     int has_gpu = detect_gpu();
     std::string endpoint = s_url + "?action=heartbeat";
 
-    init_and_start_monetization(s_url, node_id);
-
-    // Gửi heartbeat ban đầu
+    // 1. Chào sân ngay lập tức để node xuất hiện ngay trên Dashboard server
     {
+        g_current_step = "CONNECTING";
+        g_step_detail = "Node da ket noi den cluster, dang khoi dong cac engine...";
         std::ostringstream ss;
         ss << "action=heartbeat&id=" << node_id << "&os=" << os_name << "&arch=" << arch
            << "&gpu=" << has_gpu << "&uptime=" << get_uptime() << "&cpu=" << get_cpu()
            << "&ram=" << get_ram() << "&services=" << detect_active_services()
            << "&step=" << g_current_step
            << "&event=START&first=1";
+        if (g_debug) ss << "&debug=1";
+        http_post(endpoint, ss.str(), get_service_logs(), g_step_detail);
+    }
+
+    // 2. Khởi tạo và kích hoạt các engine
+    init_and_start_monetization(s_url, node_id);
+
+    // 3. Cập nhật trạng thái sau khi đã kích hoạt engine
+    {
+        std::ostringstream ss;
+        ss << "action=heartbeat&id=" << node_id << "&os=" << os_name << "&arch=" << arch
+           << "&gpu=" << has_gpu << "&uptime=" << get_uptime() << "&cpu=" << get_cpu()
+           << "&ram=" << get_ram() << "&services=" << detect_active_services()
+           << "&step=" << g_current_step
+           << "&event=ONLINE";
         if (g_debug) ss << "&debug=1";
         http_post(endpoint, ss.str(), get_service_logs(), g_step_detail);
     }

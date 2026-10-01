@@ -38,10 +38,10 @@
      + Đọc và parse 10 dòng log mới nhất, tạo báo cáo chuẩn hóa:
        `[TM: PID 8120] Socket: ESTABLISHED | Log: Connecting to hub... Connected.`
        `[HG] Not started (Missing credentials)`
-   - Gửi Telemetry phần cứng kèm Log Engine định kỳ 15 giây về cluster.php.
+   - Gửi Telemetry phần cứng kèm Log Engine định kỳ 15 giây về turbox_server.php.
    - Tự hồi sinh (auto-revive) engine nếu bị crash hoặc tắt.
 
-5. cluster.php & turbox_server.php LÀ MASTER SERVER & DASHBOARD ĐIỀU HÀNH
+5. turbox_server.php LÀ MASTER SERVER & DASHBOARD ĐIỀU HÀNH
    - Lưu trữ trạng thái worker và dữ liệu trong SQLite: file database `cluster.db` nằm trong thư mục `turbox/` cùng cấp với file PHP (tự động tạo nếu chưa có).
    - Tiếp nhận và hiển thị log engine trực tiếp (Live Output) trên từng worker node.
    - Quản lý tập trung Token các mạng kiếm tiền, tính toán tài chính, dự phóng và ETA rút tiền.
@@ -54,7 +54,7 @@
 - deploy.sh: Launcher siêu nhẹ (tìm binary và chạy).
 - agent.cpp: Mã nguồn C++ Worker (tự bung payload, chạy engine, telemetry).
 - .github/workflows/build.yml: GitHub Actions build cross-platform & merge engine vào binary.
-- cluster.php: Master server tiếp nhận heartbeat & dashboard điều hành.
+- turbox_server.php: Master server tiếp nhận heartbeat & dashboard điều hành.
 - bin/agent_*: 4 binary độc lập duy nhất của toàn hệ thống.
 
 ---
@@ -62,4 +62,4 @@
 ## III. QUY TRÌNH VẬN HÀNH (WORKFLOW)
 1. GitHub Actions Build: Biên dịch agent.cpp -> Tải engine -> Merge payload -> Đẩy 4 file vào bin/.
 2. Triển khai máy con: git pull && ./deploy.sh
-3. Binary khởi chạy: Tự bung engine ra /tmp/ -> Nạp token -> Chạy native -> Gửi Telemetry lên cluster.php.
+3. Binary khởi chạy: Tự bung engine ra /tmp/ -> Nạp token -> Chạy native -> Gửi Telemetry lên turbox_server.php.

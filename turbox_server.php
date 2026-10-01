@@ -41,7 +41,9 @@ if (file_exists(__DIR__ . '/cluster.db') && !file_exists($dbDir . '/cluster.db')
 }
 $dbPath = is_dir($dbDir) ? ($dbDir . '/cluster.db') : (__DIR__ . '/cluster.db');
 $db = new SQLite3($dbPath);
-$db->busyTimeout(5000);
+$db->busyTimeout(10000);
+$db->exec("PRAGMA journal_mode = WAL;");
+$db->exec("PRAGMA synchronous = NORMAL;");
 
 // Worker node telemetry
 $db->exec("CREATE TABLE IF NOT EXISTS workers (

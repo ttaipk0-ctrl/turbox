@@ -1,5 +1,4 @@
 #!/bin/sh
-# Turbox Cluster - Silent Production Runner (Compliant with PROJECT_FLOW.md)
 cd "$(dirname "$0")" || exit 1
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -10,6 +9,7 @@ case "$(uname -m)" in
 esac
 
 BIN="./bin/agent_${OS}_${A}"
+BIN_NAME="agent_${OS}_${A}"
 PID_FILE=".agent.pid"
 LOG_FILE=".agent.log"
 
@@ -19,7 +19,7 @@ case "$1" in
             echo "[OK] Running (PID: $(cat "$PID_FILE"))"
             exit 0
         fi
-        P=$(pgrep -f "$BIN" 2>/dev/null)
+        P=$(pgrep -x "$BIN_NAME" 2>/dev/null || pgrep -f "$BIN" 2>/dev/null)
         if [ -n "$P" ]; then
             echo "[OK] Running (PID: $(echo $P | tr '\n' ' '))"
             exit 0
@@ -29,6 +29,9 @@ case "$1" in
         ;;
     stop)
         K=0
+        if [ -x "$BIN" ]; then
+            "$BIN" stop >/dev/null 2>&1 || true
+        fi
         if [ -f "$PID_FILE" ]; then
             PID=$(cat "$PID_FILE" 2>/dev/null)
             if [ -n "$PID" ]; then
@@ -37,13 +40,10 @@ case "$1" in
             fi
             rm -f "$PID_FILE"
         fi
-        P=$(pgrep -f "$BIN" 2>/dev/null)
+        P=$(pgrep -x "$BIN_NAME" 2>/dev/null || pgrep -f "$BIN" 2>/dev/null)
         if [ -n "$P" ]; then
             kill -9 $P 2>/dev/null
             K=1
-        fi
-        if [ -x "$BIN" ]; then
-            "$BIN" stop >/dev/null 2>&1 || true
         fi
         [ "$K" -eq 1 ] && echo "[OK] Stopped" || echo "[INFO] Not running"
         exit 0
@@ -84,12 +84,9 @@ fi
 
 echo "[ERROR] Failed to start $BIN"
 rm -f "$PID_FILE"
-
-# Tự động in chi tiết lỗi ra màn hình ngay lập tức (không bắt người dùng gõ manual)
 if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
     cat "$LOG_FILE"
 else
-    # Nếu nohup chưa ghi kịp hoặc OS kill ngay khi nạp dynamic linker, chạy trực tiếp để in lỗi OS (GLIBC, format, lib...)
     "$BIN" 2>&1
 fi
 exit 1

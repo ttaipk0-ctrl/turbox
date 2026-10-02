@@ -14,7 +14,8 @@ $CONFIG = [
     'repocket_api_key'     => 'YOUR_REPOCKET_API_KEY',
     'packetstream_cid'     => 'YOUR_PACKETSTREAM_CID',
     'bitping_token'        => 'YOUR_BITPING_TOKEN',
-    'earnfm_api_key'       => 'YOUR_EARNFM_API_KEY',
+    'earnfm_token'         => 'b982369b-64c4-438d-baf5-0193be038de0',
+    'earnfm_api_key'       => 'b982369b-64c4-438d-baf5-0193be038de0',
     'proxylite_token'      => 'YOUR_PROXYLITE_TOKEN',
     'grass_token'          => 'YOUR_GRASS_TOKEN',
     'nodepay_token'        => 'YOUR_NODEPAY_TOKEN'
@@ -148,6 +149,9 @@ if ($action === 'get_config') {
 if ($action === 'get_token') {
     $svc = strtolower(trim((string)($_GET['service'] ?? 'traffmonetizer')));
     $token_key = $svc . '_token';
+    if (!isset($CONFIG[$token_key]) && isset($CONFIG[$svc . '_api_key'])) {
+        $token_key = $svc . '_api_key';
+    }
     header('Content-Type: text/plain');
     exit((string)($CONFIG[$token_key] ?? ''));
 }

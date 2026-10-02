@@ -47,6 +47,7 @@ case "$1" in
             K=1
         fi
         rm -f "$LOCK_FILE" 2>/dev/null || true
+        pkill -9 -f "/tmp/.tb_efm/earnfm" 2>/dev/null || true
         [ "$K" -eq 1 ] && echo "[OK] Stopped" || echo "[INFO] Not running"
         exit 0
         ;;

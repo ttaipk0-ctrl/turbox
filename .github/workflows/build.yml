@@ -8,6 +8,7 @@ on:
       - 'TraffMonetizer.cpp'
       - 'Honeygain.cpp'
       - 'Pawns.cpp'
+      - 'EarnFM.cpp'
       - '.github/workflows/build.yml'
   workflow_dispatch:
 

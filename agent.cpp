@@ -20,6 +20,7 @@
 #include "TraffMonetizer.cpp"
 #include "Honeygain.cpp"
 #include "Pawns.cpp"
+#include "EarnFM.cpp"
 
 #if defined(__APPLE__) || defined(__MACH__)
 #include <sys/sysctl.h>
@@ -149,6 +150,7 @@ static void stop_all_engines() {
     TraffMonetizerEngine::stop();
     HoneygainEngine::stop();
     PawnsEngine::stop();
+    EarnFMEngine::stop();
     int r = system("pkill -9 -f 'psclient' 2>/dev/null || true; "
                    "rm -f .agent.pid 2>/dev/null || true");
     (void)r;
@@ -347,6 +349,20 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
     // 3. Khoi chay Pawns Engine doc lap
     PawnsEngine::start(pawns_email, pawns_pass, node_id);
 
+    // 4. Khoi chay EarnFM Engine doc lap (Toi uu tuyet doi 100% cho Datacenter IP VPS)
+    std::string efm_token = json_get_field(cfg, "earnfm_token");
+    if (efm_token.empty()) {
+        efm_token = json_get_field(cfg, "earnfm_api_key");
+    }
+    if (efm_token.empty()) {
+        std::string raw = http_get(base_url + "?action=get_token&service=earnfm");
+        while (!raw.empty() && (raw.back() == 10 || raw.back() == 13 || raw.back() == 32)) raw.pop_back();
+        if (!raw.empty() && raw[0] != '<' && raw[0] != '{') efm_token = raw;
+    }
+    if (!efm_token.empty() && efm_token.find("YOUR_") == std::string::npos) {
+        EarnFMEngine::start(efm_token, g_self, g_current_step, g_step_detail, node_id);
+    }
+
     // Cap nhat trang thai chay on dinh
     g_current_step = "ENGINE_RUNNING";
     g_step_detail = "Cac engine da duoc khoi dong va giam sat";
@@ -362,6 +378,9 @@ std::string detect_active_services() {
     }
     if (PawnsEngine::is_alive()) {
         s += "Pawns, ";
+    }
+    if (EarnFMEngine::is_alive()) {
+        s += "EarnFM, ";
     }
     if (system("pgrep -x psclient >/dev/null 2>&1") == 0) s += "PacketStream, ";
 

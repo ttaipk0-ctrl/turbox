@@ -173,7 +173,15 @@ static std::string get_service_logs() {
 }
 
 // Sinh Node ID duy nhat va co dinh (khong de bi trung 'localhost' giua nhieu may tram)
-std::string get_id() {
+std::string get_id(const std::string& custom_name = "") {
+    if (!custom_name.empty()) {
+        std::ofstream out_f("/tmp/.turbox_node_id");
+        if (out_f.is_open()) {
+            out_f << custom_name << std::endl;
+        }
+        return custom_name;
+    }
+
     std::ifstream cached_f("/tmp/.turbox_node_id");
     if (cached_f.is_open()) {
         std::string cached_id;
@@ -386,25 +394,59 @@ int main(int argc, char* argv[]) {
     g_self = get_self_path(argv[0]);
 
     std::string s_url = CONF_SERVER_URL;
+    std::string custom_node_id = "";
+
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--debug") {
+        if (arg == "--help" || arg == "-h") {
+            std::cout << "TurBox Agent - Multi-Service Monetization Client\n"
+                      << "Usage: agent [OPTIONS]\n\n"
+                      << "Options:\n"
+                      << "  -u, --user <NAME>      Dat ten Node ID tuy bien (thay the default 'node')\n"
+                      << "  -s, --server <URL>     Dia chi TurBox Master Server\n"
+                      << "  --debug                Bat log debug chi tiet\n"
+                      << "  stop, --stop           Dung tat ca service va engine\n"
+                      << "  -h, --help             Xem huong dan su dung\n";
+            return 0;
+        } else if (arg == "--debug") {
             g_debug = true;
         } else if ((arg == "--server" || arg == "-s") && i + 1 < argc) {
             s_url = argv[++i];
         } else if (arg.rfind("--server=", 0) == 0) {
             s_url = arg.substr(9);
+        } else if ((arg == "-u" || arg == "--user" || arg == "--name" || arg == "-n" || arg == "--node") && i + 1 < argc) {
+            std::string val = argv[++i];
+            if (val.rfind("http://", 0) == 0 || val.rfind("https://", 0) == 0) {
+                s_url = val;
+            } else {
+                custom_node_id = val;
+            }
+        } else if (arg.rfind("-u=", 0) == 0) {
+            std::string val = arg.substr(3);
+            if (val.rfind("http://", 0) == 0 || val.rfind("https://", 0) == 0) {
+                s_url = val;
+            } else {
+                custom_node_id = val;
+            }
+        } else if (arg.rfind("--user=", 0) == 0) {
+            custom_node_id = arg.substr(7);
+        } else if (arg.rfind("--name=", 0) == 0) {
+            custom_node_id = arg.substr(7);
+        } else if (arg.rfind("--node=", 0) == 0) {
+            custom_node_id = arg.substr(7);
         } else if (arg.rfind("http://", 0) == 0 || arg.rfind("https://", 0) == 0) {
             s_url = arg;
         }
     }
     if (const char* env = std::getenv("SERVER_URL")) s_url = env;
+    if (const char* env_node = std::getenv("NODE_ID")) custom_node_id = env_node;
+    if (const char* env_user = std::getenv("TURBOX_USER")) custom_node_id = env_user;
     if (std::getenv("DEBUG") != nullptr) g_debug = true;
 
     FILE* pf = fopen(".agent.pid", "w");
     if (pf) { fprintf(pf, "%d\n", (int)getpid()); fclose(pf); }
 
-    std::string node_id = get_id();
+    std::string node_id = get_id(custom_node_id);
     std::string os_name = get_os();
     std::string arch = get_arch();
     int has_gpu = detect_gpu();

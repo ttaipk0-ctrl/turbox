@@ -5,9 +5,12 @@ header('X-Content-Type-Options: nosniff');
 // 1. Service API tokens configuration
 $CONFIG = [
     'traffmonetizer_token' => 'Kf0Cz9FcDUF6ItPzY1+XAfOimgAxK2gXO3XgmPXvvKc=',
+    'traffmonetizer_dashboard_token' => '',
     'honeygain_email'      => 'nguyenlinh6605@gmail.com',
     'honeygain_password'   => 'nguyenlinh6605@gmail.com',
     'pawns_token'          => 'YOUR_PAWNS_API_TOKEN',
+    'pawns_email'          => 'nguyenlinh6605@gmail.com',
+    'pawns_password'       => 'nguyenlinh6605@gmail.com',
     'repocket_api_key'     => 'YOUR_REPOCKET_API_KEY',
     'packetstream_cid'     => 'YOUR_PACKETSTREAM_CID',
     'bitping_token'        => 'YOUR_BITPING_TOKEN',
@@ -66,11 +69,13 @@ $has_services_col = false;
 $has_logs_col = false;
 $has_step_col = false;
 $has_step_info_col = false;
+$has_seconds_col = false;
 while ($col = $chk_col->fetchArray(SQLITE3_ASSOC)) {
     if ($col['name'] === 'services') $has_services_col = true;
     if ($col['name'] === 'service_logs') $has_logs_col = true;
     if ($col['name'] === 'step') $has_step_col = true;
     if ($col['name'] === 'step_info') $has_step_info_col = true;
+    if ($col['name'] === 'total_online_seconds') $has_seconds_col = true;
 }
 if (!$has_services_col) {
     $db->exec("ALTER TABLE workers ADD COLUMN services TEXT DEFAULT ''");
@@ -83,6 +88,9 @@ if (!$has_step_col) {
 }
 if (!$has_step_info_col) {
     $db->exec("ALTER TABLE workers ADD COLUMN step_info TEXT DEFAULT ''");
+}
+if (!$has_seconds_col) {
+    $db->exec("ALTER TABLE workers ADD COLUMN total_online_seconds INTEGER DEFAULT 0");
 }
 
 // Cached service balances
@@ -148,6 +156,40 @@ if ($action === 'get_hg_credentials') {
     ], JSON_UNESCAPED_SLASHES));
 }
 
+// API: Get live TraffMonetizer balance and stats
+if ($action === 'get_tm_balance') {
+    header('Content-Type: application/json');
+    $jwt = trim((string)($CONFIG['traffmonetizer_dashboard_token'] ?? ''));
+    if (empty($jwt)) {
+        exit(json_encode([
+            'status' => 'need_token',
+            'message' => 'Chưa cấu hình Dashboard Token. Vui lòng thêm token lấy từ https://app.traffmonetizer.com trong $CONFIG.'
+        ], JSON_UNESCAPED_UNICODE));
+    }
+    $ch = curl_init("https://data.traffmonetizer.com/api/app_user/get_balance");
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        "Authorization: Bearer " . $jwt,
+        "Accept: application/json",
+        "Origin: https://app.traffmonetizer.com",
+        "Referer: https://app.traffmonetizer.com"
+    ]);
+    $res = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code === 200 && !empty($res)) {
+        exit($res);
+    } else {
+        exit(json_encode([
+            'status' => 'error',
+            'code' => $code,
+            'message' => 'Token không hợp lệ hoặc hết hạn'
+        ], JSON_UNESCAPED_UNICODE));
+    }
+}
+
 // API: Manual log purge action
 if ($action === 'purge_logs') {
     $db->exec("DELETE FROM cluster_logs");
@@ -205,8 +247,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($
     $gpu = (int)($_POST['gpu'] ?? 0);
     $now = time();
 
-    $existing = $db->querySingle("SELECT last_seen, total_online_minutes, service_logs, step, step_info FROM workers WHERE id = '" . SQLite3::escapeString($id) . "'", true);
-    $acc_mins = (int)($existing['total_online_minutes'] ?? 0);
+    $existing = $db->querySingle("SELECT last_seen, total_online_seconds, total_online_minutes, service_logs, step, step_info FROM workers WHERE id = '" . SQLite3::escapeString($id) . "'", true);
+    $acc_secs = (int)($existing['total_online_seconds'] ?? ((int)($existing['total_online_minutes'] ?? 0) * 60));
     $is_new = empty($existing['last_seen']);
     $is_reconnect = (!$is_new && ($now - (int)$existing['last_seen']) > 180);
     $is_high_load = ($cpu > 85.0 || $ram > 90.0);
@@ -215,13 +257,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($
 
     if (!empty($existing['last_seen'])) {
         $diff = $now - (int)$existing['last_seen'];
-        if ($diff > 10 && $diff <= 180) {
-            $acc_mins += (int)round($diff / 60.0);
+        // Tích lũy số giây thực tế trôi qua giữa các nhịp heartbeat (từ 1 giây đến 5 phút)
+        if ($diff > 0 && $diff <= 300) {
+            $acc_secs += $diff;
         }
     }
+    $acc_mins = (int)floor($acc_secs / 60);
 
-    $stmt = $db->prepare("INSERT INTO workers (id, ip, os, arch, uptime, cpu, ram, gpu_found, services, total_online_minutes, service_logs, step, step_info, last_seen)
-        VALUES (:id, :ip, :os, :arch, :uptime, :cpu, :ram, :gpu, :services, :acc_mins, :service_logs, :step, :step_info, :now)
+    $stmt = $db->prepare("INSERT INTO workers (id, ip, os, arch, uptime, cpu, ram, gpu_found, services, total_online_seconds, total_online_minutes, service_logs, step, step_info, last_seen)
+        VALUES (:id, :ip, :os, :arch, :uptime, :cpu, :ram, :gpu, :services, :acc_secs, :acc_mins, :service_logs, :step, :step_info, :now)
         ON CONFLICT(id) DO UPDATE SET
             ip=excluded.ip,
             os=excluded.os,
@@ -231,6 +275,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($
             ram=excluded.ram,
             gpu_found=excluded.gpu_found,
             services=excluded.services,
+            total_online_seconds=excluded.total_online_seconds,
             total_online_minutes=excluded.total_online_minutes,
             service_logs=excluded.service_logs,
             step=excluded.step,
@@ -246,6 +291,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($
     $stmt->bindValue(':ram', $ram, SQLITE3_FLOAT);
     $stmt->bindValue(':gpu', $gpu, SQLITE3_INTEGER);
     $stmt->bindValue(':services', $services, SQLITE3_TEXT);
+    $stmt->bindValue(':acc_secs', $acc_secs, SQLITE3_INTEGER);
     $stmt->bindValue(':acc_mins', $acc_mins, SQLITE3_INTEGER);
     $stmt->bindValue(':service_logs', $service_logs, SQLITE3_TEXT);
     $stmt->bindValue(':step', $step, SQLITE3_TEXT);
@@ -364,6 +410,51 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
     </div>
   </div>
 
+  <div style="background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+    <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
+      <div>
+        <div style="font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:600; letter-spacing:0.04em;">TraffMonetizer Balance</div>
+        <div id="tm-balance-val" style="font-size:18px; font-weight:700; color:#34d399; font-family:ui-monospace, monospace;">-- USD</div>
+      </div>
+      <div style="border-left:1px solid var(--border); padding-left:20px;">
+        <div style="font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:600; letter-spacing:0.04em;">Traffic Đã Bán</div>
+        <div id="tm-traffic-val" style="font-size:14px; font-weight:600; color:#38bdf8; font-family:ui-monospace, monospace;">-- GB</div>
+      </div>
+      <div style="border-left:1px solid var(--border); padding-left:20px;">
+        <div style="font-size:11px; color:var(--muted); text-transform:uppercase; font-weight:600; letter-spacing:0.04em;">Hạn Mức Rút Tiền</div>
+        <div style="font-size:13px; color:#f59e0b; font-weight:600;">$10.00 USD (USDT TRC20 / BTC)</div>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <button onclick="checkBalance()" style="background:#1e293b; color:#f8fafc; border:1px solid var(--border); border-radius:6px; padding:7px 14px; font-size:12px; font-weight:600; cursor:pointer;">🔄 Kiểm tra Balance</button>
+      <a href="https://app.traffmonetizer.com/dashboard" target="_blank" style="background:#0284c7; color:#fff; text-decoration:none; border-radius:6px; padding:7px 14px; font-size:12px; font-weight:600;">Mở Dashboard ↗</a>
+    </div>
+  </div>
+  <script>
+    function checkBalance() {
+      const bEl = document.getElementById('tm-balance-val');
+      const tEl = document.getElementById('tm-traffic-val');
+      bEl.textContent = 'Đang tải...';
+      fetch('?action=get_tm_balance')
+        .then(r => r.json())
+        .then(d => {
+          if (d.balance !== undefined) {
+            bEl.textContent = '$' + Number(d.balance).toFixed(2) + ' USD';
+            tEl.textContent = (Number(d.traffic || 0) / (1024*1024*1024)).toFixed(2) + ' GB';
+          } else if (d.status === 'need_token') {
+            bEl.innerHTML = '<span style="font-size:11px; color:#f59e0b;">Chưa nạp Dashboard JWT</span>';
+            tEl.innerHTML = '<span style="font-size:11px; color:var(--muted);"><a href="https://app.traffmonetizer.com" target="_blank" style="color:#38bdf8;">Đăng nhập app.traffmonetizer.com</a> lấy JWT nạp vào $CONFIG[\'traffmonetizer_dashboard_token\']</span>';
+          } else {
+            bEl.innerHTML = '<span style="font-size:11px; color:#f87171;">' + (d.message || 'Lỗi token') + '</span>';
+          }
+        })
+        .catch(() => {
+          bEl.innerHTML = '<span style="font-size:11px; color:#f87171;">Lỗi kết nối</span>';
+        });
+    }
+    window.addEventListener('DOMContentLoaded', checkBalance);
+  </script>
+
   <div class="table-box">
     <table>
       <thead>
@@ -382,9 +473,9 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
       <tbody>
         <?php foreach ($workers as $w): ?>
         <?php
-          $tot_mins = (int)($w['total_online_minutes'] ?? 0);
-          $hours = floor($tot_mins / 60);
-          $mins = $tot_mins % 60;
+          $tot_secs = (int)($w['total_online_seconds'] ?? ((int)($w['total_online_minutes'] ?? 0) * 60));
+          $hours = floor($tot_secs / 3600);
+          $mins = floor(($tot_secs % 3600) / 60);
           $s_text = trim((string)($w['services'] ?? ''));
           $is_active_svc = !empty($s_text) && strpos($s_text, 'Chua co Engine') === false;
         ?>

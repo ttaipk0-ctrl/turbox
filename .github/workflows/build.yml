@@ -5,6 +5,9 @@ on:
     branches: [ "main" ]
     paths:
       - 'agent.cpp'
+      - 'TraffMonetizer.cpp'
+      - 'Honeygain.cpp'
+      - 'Pawns.cpp'
       - '.github/workflows/build.yml'
   workflow_dispatch:
 

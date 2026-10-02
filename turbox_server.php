@@ -122,10 +122,15 @@ $db->exec("CREATE TABLE IF NOT EXISTS cluster_logs (
     created_at INTEGER
 )");
 
-// Hourly Auto-Pruning: Purge logs older than 24 hours to prevent heavy database
+// Auto-Pruning System:
 $now_ts = time();
+// 1. Purge logs older than 24 hours to prevent heavy database
 $auto_cutoff = $now_ts - 86400; // 24 hours
 $db->exec("DELETE FROM cluster_logs WHERE created_at < {$auto_cutoff}");
+
+// 2. Auto-Prune Offline Nodes: Tự động xóa vĩnh viễn các node offline quá 7 ngày (7 * 86400s)
+$node_cutoff_7d = $now_ts - (7 * 86400);
+$db->exec("DELETE FROM nodes WHERE last_seen < {$node_cutoff_7d}");
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 
@@ -191,6 +196,20 @@ if ($action === 'get_tm_balance') {
 }
 
 // API: Manual log purge action
+if ($action === 'delete_node' && !empty($_GET['node_id'])) {
+    $del_stmt = $db->prepare("DELETE FROM nodes WHERE id = :id");
+    $del_stmt->execute([':id' => $_GET['node_id']]);
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+    exit;
+}
+
+if ($action === 'purge_offline') {
+    $node_cutoff_7d = time() - (7 * 86400);
+    $db->exec("DELETE FROM nodes WHERE last_seen < {$node_cutoff_7d}");
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+    exit;
+}
+
 if ($action === 'purge_logs') {
     $db->exec("DELETE FROM cluster_logs");
     $self = basename($_SERVER['PHP_SELF'] ?? 'turbox_server.php');
@@ -455,7 +474,11 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
     window.addEventListener('DOMContentLoaded', checkBalance);
   </script>
 
-  <div class="table-box">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+  <span style="font-size:12px; color:var(--muted);"><span style="color:#34d399;">●</span> Hệ thống tự động xóa sạch các node Offline quá 7 ngày để tối ưu dữ liệu.</span>
+  <a href="?action=purge_offline" onclick="return confirm('Dọn dẹp ngay các node offline trên 7 ngày?')" style="font-size:11px; color:#f87171; text-decoration:none; padding:3px 8px; background:rgba(239,68,68,0.1); border-radius:4px; border:1px solid rgba(239,68,68,0.2);">[Dọn Node Offline > 7 ngày]</a>
+</div>
+<div class="table-box">
     <table>
       <thead>
         <tr>
@@ -487,7 +510,10 @@ while ($w = $res->fetchArray(SQLITE3_ASSOC)) {
               <span class="badge badge-muted" style="background:#3b101d; color:#f87171;">OFFLINE</span>
             <?php endif; ?>
           </td>
-          <td><strong style="color:#fff; font-family:ui-monospace, monospace;"><?= htmlspecialchars($w['id']) ?></strong></td>
+          <td>
+  <strong style="color:#fff; font-family:ui-monospace, monospace;"><?= htmlspecialchars($w['id']) ?></strong>
+  <a href="?action=delete_node&node_id=<?= urlencode($w['id']) ?>" onclick="return confirm('Xác nhận xóa node <?= htmlspecialchars($w['id']) ?>?')" style="color:#ef4444; font-size:11px; margin-left:6px; text-decoration:none; opacity:0.6;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" title="Xóa node này khỏi danh sách">✕</a>
+</td>
           <td style="font-family:ui-monospace, monospace; color:var(--muted);"><?= htmlspecialchars($w['ip']) ?></td>
           <td>
             <?php if ($is_active_svc): ?>

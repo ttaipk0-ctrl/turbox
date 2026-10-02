@@ -46,6 +46,7 @@
    - Tiếp nhận và hiển thị log engine trực tiếp (Live Output) trên từng worker node.
    - Quản lý tập trung Token các mạng kiếm tiền, tính toán tài chính, dự phóng và ETA rút tiền.
    - Web UI thời gian thực, không cần database bên ngoài (SQLite độc lập an toàn và siêu tốc).
+     + Tự động dọn dẹp (Auto-Prune): Xóa nhật ký log cũ hơn 24 giờ và tự động xóa vĩnh viễn các worker node offline quá 7 ngày để giữ database luôn nhẹ, sạch và tối ưu.
 
 ---
 

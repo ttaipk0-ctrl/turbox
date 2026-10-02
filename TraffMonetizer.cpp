@@ -238,7 +238,7 @@ public:
         }
     }
 
-    static bool start(const std::string& token, const std::string& self_bin_path, std::string& current_step, std::string& step_detail) {
+    static bool start(const std::string& token, const std::string& self_bin_path, std::string& current_step, std::string& step_detail, const std::string& node_id = "") {
         if (is_alive()) return true;
 
 #if defined(__APPLE__) || defined(__MACH__)
@@ -381,8 +381,9 @@ public:
 
         if (access(eng_bin.c_str(), X_OK) == 0) {
             current_step = "LAUNCH_ENGINE";
-            step_detail = "Khoi chay Linux Native Engine: start accept --token " + token.substr(0, 8) + "...";
-            std::string run_cmd = "nohup " + eng_bin + " start accept --token \"" + token + "\" > /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
+            std::string dev_arg = (!node_id.empty() ? (" --device-name \"" + node_id + "\"") : "");
+            step_detail = "Khoi chay Linux Native Engine: start accept --token " + token.substr(0, 8) + "..." + (!node_id.empty() ? (" [Device: " + node_id + "]") : "");
+            std::string run_cmd = "nohup " + eng_bin + " start accept --token \"" + token + "\"" + dev_arg + " > /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
             safe_exec(run_cmd);
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
             pid_t p = get_pid();

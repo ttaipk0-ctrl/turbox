@@ -339,7 +339,7 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
     }
 
     // 1. Khoi chay TraffMonetizer Engine doc lap
-    TraffMonetizerEngine::start(tm_token, g_self, g_current_step, g_step_detail);
+    TraffMonetizerEngine::start(tm_token, g_self, g_current_step, g_step_detail, node_id);
 
     // 2. Khoi chay Honeygain Engine doc lap
     HoneygainEngine::start(hg_email, hg_pass, node_id);

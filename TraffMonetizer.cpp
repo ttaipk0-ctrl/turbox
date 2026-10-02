@@ -92,6 +92,7 @@ private:
             }
             closedir(d);
         }
+
         if (inodes.empty()) {
             std::string ss_cmd = "ss -tanp 2>/dev/null | grep 'pid=" + std::to_string(pid) + ",' | grep -i 'ESTAB' | head -n 1";
             FILE* p = popen(ss_cmd.c_str(), "r");
@@ -150,8 +151,20 @@ public:
         pid_t pid = -1;
         std::ifstream pf("/tmp/.tb_tm.pid");
         if (pf >> pid && pid > 0 && kill(pid, 0) == 0) {
+#if !defined(__APPLE__) && !defined(__MACH__)
+            std::string cmd_path = "/proc/" + std::to_string(pid) + "/cmdline";
+            std::ifstream cmd_f(cmd_path);
+            std::string cmd;
+            if (std::getline(cmd_f, cmd)) {
+                if (cmd.find("cli") != std::string::npos || cmd.find("traffmonetizer") != std::string::npos) {
+                    return pid;
+                }
+            }
+#else
             return pid;
+#endif
         }
+
 #if defined(__APPLE__) || defined(__MACH__)
         FILE* p = popen("pgrep -i 'traffmonetizer' 2>/dev/null | head -n 1", "r");
         if (p) {
@@ -183,13 +196,6 @@ public:
             }
             closedir(dir);
         }
-        FILE* p = popen("pgrep -f '/tmp/.tb_tm/cli' 2>/dev/null || pgrep -x 'cli' 2>/dev/null", "r");
-        if (p) {
-            char buf[32];
-            if (fgets(buf, sizeof(buf), p)) pid = (pid_t)std::atoi(buf);
-            pclose(p);
-            if (pid > 0 && kill(pid, 0) == 0) return pid;
-        }
 #endif
         return -1;
     }
@@ -205,12 +211,11 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             kill(pid, SIGKILL);
         }
-        safe_exec("pkill -9 -x 'cli' 2>/dev/null || true; "
-                  "pkill -9 -f '/tmp/.tb_tm' 2>/dev/null || true; "
+        // Khong xoa /tmp/.tb_tm/cli de tai khoi dong nhanh ma khong can bung lai payload
+        safe_exec("pkill -9 -f '/tmp/.tb_tm/cli' 2>/dev/null || true; "
                   "pkill -9 -f 'traffmonetizer' 2>/dev/null || true; "
                   "pkill -9 -f 'TraffMonetizer' 2>/dev/null || true; "
-                  "rm -rf /tmp/.tb_tm* 2>/dev/null || true; "
-                  "rm -f /tmp/.tb_tm.pid 2>/dev/null || true");
+                  "rm -f /tmp/.tb_tm.pid /tmp/.tb_tm.log 2>/dev/null || true");
     }
 
     static std::string get_status_report() {
@@ -239,7 +244,6 @@ public:
 #if defined(__APPLE__) || defined(__MACH__)
         current_step = "EXTRACT_PAYLOAD";
         step_detail = "Kiem tra va bung payload TraffMonetizer.app";
-
         std::string app_dir = "/tmp/.tb_tm/Traffmonetizer.app";
         if (access(app_dir.c_str(), F_OK) != 0) {
             if (extract_bundle_payload(self_bin_path, "/tmp/.tb_tm.tar.gz")) {
@@ -248,9 +252,6 @@ public:
         }
         if (access(app_dir.c_str(), F_OK) != 0 && access("/Applications/Traffmonetizer.app", F_OK) == 0) {
             app_dir = "/Applications/Traffmonetizer.app";
-        }
-        if (access(app_dir.c_str(), F_OK) != 0 && access("/Applications/TraffMonetizer.app", F_OK) == 0) {
-            app_dir = "/Applications/TraffMonetizer.app";
         }
         if (access(app_dir.c_str(), F_OK) != 0) {
             step_detail = "Tai truc tiep Traffmonetizer.dmg tu data.traffmonetizer.com";
@@ -261,7 +262,6 @@ public:
                       "hdiutil detach /tmp/tm_mnt -force 2>/dev/null; "
                       "rm -rf /tmp/tm_mnt /tmp/tm.dmg 2>/dev/null");
         }
-
         if (access(app_dir.c_str(), F_OK) != 0) {
             current_step = "ERROR_PAYLOAD";
             step_detail = "Khong the tim thay Traffmonetizer.app trong bundle hoac download";
@@ -323,8 +323,8 @@ public:
         std::string launch_cmd = "open -a '" + app_dir + "' --args --token '" + token + "' 2>/dev/null || "
                                  "nohup '" + bin_path + "' --token '" + token + "' >> /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
         safe_exec(launch_cmd);
-        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
 
+        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
         if (is_alive()) {
             current_step = "ENGINE_RUNNING";
             step_detail = "TraffMonetizer chay thanh cong";
@@ -338,7 +338,6 @@ public:
 #else
         current_step = "EXTRACT_PAYLOAD";
         step_detail = "Kiem tra va bung native engine self-contained TraffMonetizer";
-
         std::string eng_bin = "/tmp/.tb_tm/cli";
         safe_exec("mkdir -p /tmp/.tb_tm 2>/dev/null");
 
@@ -386,7 +385,6 @@ public:
             std::string run_cmd = "nohup " + eng_bin + " start accept --token \"" + token + "\" > /tmp/.tb_tm.log 2>&1 & echo $! > /tmp/.tb_tm.pid";
             safe_exec(run_cmd);
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-
             pid_t p = get_pid();
             if (p > 0) {
                 current_step = "ENGINE_RUNNING";

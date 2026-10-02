@@ -12,6 +12,7 @@ BIN="./bin/agent_${OS}_${A}"
 BIN_NAME="agent_${OS}_${A}"
 PID_FILE=".agent.pid"
 LOG_FILE=".agent.log"
+LOCK_FILE="/tmp/.turbox_agent.lock"
 
 case "$1" in
     status)
@@ -45,6 +46,7 @@ case "$1" in
             kill -9 $P 2>/dev/null
             K=1
         fi
+        rm -f "$LOCK_FILE" 2>/dev/null || true
         [ "$K" -eq 1 ] && echo "[OK] Stopped" || echo "[INFO] Not running"
         exit 0
         ;;
@@ -75,8 +77,8 @@ fi
 nohup "$BIN" "$@" > "$LOG_FILE" 2>&1 &
 PID=$!
 echo "$PID" > "$PID_FILE"
-
 sleep 1
+
 if kill -0 "$PID" 2>/dev/null; then
     echo "[OK] Started (PID: $PID)"
     exit 0

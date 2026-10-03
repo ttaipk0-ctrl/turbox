@@ -6,37 +6,26 @@ header('X-Content-Type-Options: nosniff');
 $CONFIG = [
     'traffmonetizer_token' => 'Kf0Cz9FcDUF6ItPzY1+XAfOimgAxK2gXO3XgmPXvvKc=',
     'traffmonetizer_dashboard_token' => '',
+    'earnfm_token'         => 'b982369b-64c4-438d-baf5-0193be038de0',
+    'earnfm_api_key'       => 'b982369b-64c4-438d-baf5-0193be038de0',
+    'bitping_token'        => '2VuvSf2KG8DfVuaXfrHtFVkNEbyA9W4FgiMo8Br5PNbbEJgnR5',
+    'kryptex_email'        => 'nguyenlinh6605@gmail.com',
+    'kryptex_wallet'       => 'nguyenlinh6605@gmail.com',
     'honeygain_email'      => 'nguyenlinh6605@gmail.com',
     'honeygain_password'   => 'nguyenlinh6605@gmail.com',
     'pawns_token'          => 'YOUR_PAWNS_API_TOKEN',
     'pawns_email'          => 'nguyenlinh6605@gmail.com',
-    'pawns_password'       => 'nguyenlinh6605@gmail.com',
-    'repocket_api_key'     => 'YOUR_REPOCKET_API_KEY',
-    'packetstream_cid'     => 'YOUR_PACKETSTREAM_CID',
-    'bitping_token'        => '2VuvSf2KG8DfVuaXfrHtFVkNEbyA9W4FgiMo8Br5PNbbEJgnR5',
-    'earnfm_token'         => 'b982369b-64c4-438d-baf5-0193be038de0',
-    'earnfm_api_key'       => 'b982369b-64c4-438d-baf5-0193be038de0',
-    'proxylite_token'      => 'YOUR_PROXYLITE_TOKEN',
-    'grass_token'          => 'YOUR_GRASS_TOKEN',
-    'nodepay_token'        => 'YOUR_NODEPAY_TOKEN',
-    'kryptex_email'        => 'nguyenlinh6605@gmail.com',
-    'kryptex_wallet'       => 'nguyenlinh6605@gmail.com',
-    'gpu_token'            => 'gpu_turbox_cluster_compute'
+    'pawns_password'       => 'nguyenlinh6605@gmail.com'
 ];
 
-// Minimum payout thresholds and withdrawal methods
+// Minimum payout thresholds and withdrawal methods for implemented engines
 $PAYOUT_THRESHOLDS = [
     'Kryptex GPU'    => ['min' => 1.0,  'unit' => 'USD', 'method' => 'USDT (TRC20/BEP20), BTC, Advcash, WebMoney'],
     'TraffMonetizer' => ['min' => 10.0, 'unit' => 'USD', 'method' => 'USDT (TRC20), BTC, Payoneer'],
-    'Honeygain'      => ['min' => 20.0, 'unit' => 'USD', 'method' => 'JMPT (No Min), PayPal'],
-    'Pawns.app'      => ['min' => 5.0,  'unit' => 'USD', 'method' => 'PayPal, BTC, Visa'],
-    'Repocket'       => ['min' => 20.0, 'unit' => 'USD', 'method' => 'PayPal, Wise'],
-    'PacketStream'   => ['min' => 5.0,  'unit' => 'USD', 'method' => 'PayPal (3% fee)'],
-    'Bitping'        => ['min' => 5.0,  'unit' => 'USD', 'method' => 'Solana (SOL), USDT'],
     'EarnFM'         => ['min' => 5.0,  'unit' => 'USD', 'method' => 'Crypto, PayPal, GiftCard'],
-    'ProxyLite'      => ['min' => 2.0,  'unit' => 'USD', 'method' => 'USDT, WebMoney, Card'],
-    'Grass Network'  => ['min' => 10.0, 'unit' => 'GRASS', 'method' => 'Solana Airdrop Claim'],
-    'Nodepay DePIN'  => ['min' => 10.0, 'unit' => 'POINTS', 'method' => 'Solana On-Chain Claim']
+    'Bitping'        => ['min' => 5.0,  'unit' => 'USD', 'method' => 'Solana (SOL), USDT'],
+    'Honeygain'      => ['min' => 20.0, 'unit' => 'USD', 'method' => 'JMPT (No Min), PayPal'],
+    'Pawns.app'      => ['min' => 5.0,  'unit' => 'USD', 'method' => 'PayPal, BTC, Visa']
 ];
 
 // Database file: nằm trong thư mục 'turbox' cùng thư mục file PHP (tự tạo nếu chưa có)

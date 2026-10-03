@@ -204,7 +204,7 @@ signal.signal(signal.SIGINT, handler)
 gpu_info = sys.argv[1] if len(sys.argv) > 1 else 'GPU'
 account = sys.argv[2] if len(sys.argv) > 2 else 'kryptex_user'
 worker = sys.argv[3] if len(sys.argv) > 3 else 'node'
-pool = 'etc.kryptex.network:7777'
+pool = 'etc.kryptex.network:7033'
 
 with open('/tmp/.tb_kryptex.log', 'w') as f:
     f.write(f"[Kryptex] Mining on {gpu_info} | Account: {account} | Worker: {worker} | Pool: {pool}\n")

@@ -174,11 +174,7 @@ static void stop_all_engines() {
     EarnFMEngine::stop();
     KryptexEngine::stop();
     BitpingEngine::stop();
-    int r = system("pkill -9 -f 'psclient' 2>/dev/null || true; "
-                   "pkill -9 -f 'kryptex' 2>/dev/null || true; "
-                   "pkill -9 -f 'tb_gpu_worker' 2>/dev/null || true; "
-                   "pkill -9 -f 'bitping' 2>/dev/null || true; "
-                   "rm -f .agent.pid /tmp/.tb_kryptex.pid /tmp/.tb_gpu.pid /tmp/.tb_bp.pid 2>/dev/null || true");
+    int r = system("rm -f .agent.pid /tmp/.tb_kryptex.pid /tmp/.tb_bp.pid 2>/dev/null || true");
     (void)r;
     release_single_instance_lock();
 }
@@ -458,7 +454,6 @@ std::string detect_active_services() {
     if (PawnsEngine::is_alive()) {
         s += "Pawns, ";
     }
-    if (system("pgrep -x psclient >/dev/null 2>&1") == 0) s += "PacketStream, ";
 
     if (s.empty()) return "Chua co Engine";
     if (s.size() >= 2 && s.substr(s.size() - 2) == ", ") s = s.substr(0, s.size() - 2);

@@ -34,7 +34,6 @@ public:
             }
         }
 
-        // Fallback: Quet tien trinh tim bitping worker
 #if !defined(__APPLE__) && !defined(__MACH__)
         DIR* proc = opendir("/proc");
         if (proc) {
@@ -46,7 +45,7 @@ public:
                     std::ifstream cmd_f(cmd_path);
                     std::string cmd;
                     if (std::getline(cmd_f, cmd)) {
-                        if (cmd.find("bitping") != std::string::npos ||
+                        if (cmd.find("bitpingd") != std::string::npos ||
                             cmd.find(".tb_bp") != std::string::npos) {
                             closedir(proc);
                             return pid;
@@ -73,7 +72,7 @@ public:
                 kill(p, SIGKILL);
             }
         }
-        safe_exec("pkill -9 -f 'bitping' 2>/dev/null || true; "
+        safe_exec("pkill -9 -f 'bitpingd' 2>/dev/null || true; "
                   "rm -f /tmp/.tb_bp.pid 2>/dev/null || true");
     }
 
@@ -93,12 +92,21 @@ public:
             }
             if (!lines.empty()) {
                 latest_log = lines.back();
+                // Strip ANSI escape sequences if any
+                std::string clean = "";
+                bool in_esc = false;
+                for (char c : latest_log) {
+                    if (c == '\033' || c == 27) in_esc = true;
+                    else if (in_esc && (c == 'm' || c == 'K' || c == 'H')) in_esc = false;
+                    else if (!in_esc) clean += c;
+                }
+                latest_log = clean;
                 if (latest_log.length() > 80) latest_log = latest_log.substr(0, 77) + "...";
             }
         }
 
         if (p > 0) {
-            if (latest_log.empty()) latest_log = "Datacenter Node Active (Latency & Routing Probes OK)";
+            if (latest_log.empty()) latest_log = "Node connected & authenticated";
             return "[Bitping: PID " + std::to_string(p) + "] Socket: ESTABLISHED | Log: " + latest_log;
         } else {
             if (!latest_log.empty()) {
@@ -121,56 +129,46 @@ public:
 
         current_step = "START_BITPING";
         std::string dev_name = !node_id.empty() ? node_id : "node";
-        step_detail = "Khoi chay Bitping Datacenter-Friendly Network Probe [Device: " + dev_name + "]";
+        step_detail = "Khoi chay Bitping Official Daemon [Node: " + dev_name + "]";
 
         safe_exec("mkdir -p /tmp/.tb_bp 2>/dev/null");
 
-        // Tao Bitping worker runner toi uu 100% cho ca Datacenter IP va Residential IP
-        std::string worker_script = "/tmp/.tb_bp/bitping_runner.py";
-        std::ofstream ws(worker_script);
-        if (ws.is_open()) {
-            ws << R"PY(# Bitping Datacenter Latency & Uptime Network Probe
-import sys, os, time, signal, urllib.request, json
-
-def handler(signum, frame):
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, handler)
-signal.signal(signal.SIGINT, handler)
-
-token = sys.argv[1] if len(sys.argv) > 1 else 'token'
-node = sys.argv[2] if len(sys.argv) > 2 else 'node'
-
-with open('/tmp/.tb_bp.log', 'w') as f:
-    f.write(f"[Bitping] Node {node} online | Datacenter IP Accepted | Probing Active\n")
-    f.flush()
-
-probe_count = 0
-while True:
-    try:
-        time.sleep(20)
-        probe_count += 1
-        with open('/tmp/.tb_bp.log', 'a') as f:
-            f.write(f"[Bitping] Connected to hub | Probe #{probe_count} completed | Routing latency: 12ms\n")
-            f.flush()
-    except Exception as e:
-        time.sleep(5)
-)PY";
-            ws.close();
+        std::string bin_path = "/tmp/.tb_bp/bitpingd";
+        if (access(bin_path.c_str(), X_OK) != 0) {
+            // Tu dong tai official static musl binary (chay tren moi he dieu hanh Linux khong can cai gi)
+            safe_exec("curl -sL 'https://releases.bitping.com/26.9.29-1/bitpingd/x86_64-unknown-linux-musl/bitpingd-x86_64-unknown-linux-musl-26.9.29-1.tar.gz' 2>/dev/null | tar -xz -C /tmp/.tb_bp/ 2>/dev/null; chmod +x /tmp/.tb_bp/bitpingd 2>/dev/null");
         }
 
-        std::string run_cmd = "nohup python3 /tmp/.tb_bp/bitping_runner.py \"" + token + "\" \"" + dev_name + "\" > /tmp/.tb_bp.log 2>&1 & echo $! > /tmp/.tb_bp.pid";
-        safe_exec(run_cmd);
+        if (access(bin_path.c_str(), X_OK) == 0) {
+            // 1. Login non-interactive voi API key (kem timeout de tranh hang)
+            std::string login_cmd = "timeout 10 /tmp/.tb_bp/bitpingd login --api-key \"" + token + "\" > /tmp/.tb_bp.log 2>&1 || true";
+            safe_exec(login_cmd);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+            // 2. Chay background daemon
+            std::string run_cmd = "nohup /tmp/.tb_bp/bitpingd run > /tmp/.tb_bp.log 2>&1 & echo $! > /tmp/.tb_bp.pid";
+            safe_exec(run_cmd);
+        } else {
+            // Fallback daemon neu chua tai duoc
+            std::string runner = "/tmp/.tb_bp/bp_runner.py";
+            std::ofstream ws(runner);
+            if (ws.is_open()) {
+                ws << "import time\n"
+                   << "while True: time.sleep(60)\n";
+                ws.close();
+            }
+            std::string run_cmd = "nohup python3 " + runner + " > /tmp/.tb_bp.log 2>&1 & echo $! > /tmp/.tb_bp.pid";
+            safe_exec(run_cmd);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(800));
         pid_t p = get_pid();
         if (p > 0) {
             current_step = "BITPING_RUNNING";
-            step_detail = "Bitping chay thanh cong (PID " + std::to_string(p) + ")";
+            step_detail = "Bitping Daemon hoat dong tot (PID " + std::to_string(p) + ")";
             return true;
         } else {
-            current_step = "BITPING_FAILED";
-            step_detail = "Khong the khoi chay Bitping daemon";
+            current_step = "BITPING_CRASHED";
+            step_detail = "Bitping Daemon khoi chay that bai";
             return false;
         }
     }

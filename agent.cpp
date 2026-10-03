@@ -406,7 +406,8 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
     }
 
     // 5. Khoi chay Kryptex GPU Service (Tu dong nhan dien GPU NVIDIA / AMD va chay Stratum Worker)
-    std::string kryptex_user = json_get_field(cfg, "kryptex_email");
+    std::string kryptex_user = json_get_field(cfg, "kryptex_username");
+    if (kryptex_user.empty()) kryptex_user = json_get_field(cfg, "kryptex_email");
     if (kryptex_user.empty()) kryptex_user = json_get_field(cfg, "kryptex_wallet");
     if (kryptex_user.empty()) kryptex_user = json_get_field(cfg, "gpu_token");
     if (kryptex_user.empty()) {

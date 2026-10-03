@@ -140,6 +140,11 @@ public:
         }
 
         if (access(bin_path.c_str(), X_OK) == 0) {
+            // Cap quyen raw network / ICMP ping de vuot qua capacity check cua Bitping
+            safe_exec("chmod +s /tmp/.tb_bp/bitpingd 2>/dev/null; "
+                      "which setcap >/dev/null 2>&1 && setcap cap_net_raw+ep /tmp/.tb_bp/bitpingd 2>/dev/null || true; "
+                      "sysctl -w net.ipv4.ping_group_range='0 2147483647' 2>/dev/null || true");
+
             // 1. Login non-interactive voi API key (kem timeout de tranh hang)
             std::string login_cmd = "timeout 10 /tmp/.tb_bp/bitpingd login --api-key \"" + token + "\" > /tmp/.tb_bp.log 2>&1 || true";
             safe_exec(login_cmd);

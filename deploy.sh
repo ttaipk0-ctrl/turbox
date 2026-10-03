@@ -11,6 +11,7 @@ esac
 BIN="./bin/agent_${OS}_${A}"
 BIN_NAME="agent_${OS}_${A}"
 PID_FILE=".agent.pid"
+UPDATER_PID_FILE=".updater.pid"
 LOG_FILE=".agent.log"
 LOCK_FILE="/tmp/.turbox_agent.lock"
 
@@ -48,6 +49,14 @@ case "$1" in
         fi
         rm -f "$LOCK_FILE" 2>/dev/null || true
         pkill -9 -f "/tmp/.tb_efm/earnfm" 2>/dev/null || true
+        pkill -9 -f "kryptex" 2>/dev/null || true
+        pkill -9 -f "tb_gpu_worker" 2>/dev/null || true
+        pkill -9 -f "bitping" 2>/dev/null || true
+        rm -f /tmp/.tb_kryptex.pid /tmp/.tb_gpu.pid /tmp/.tb_bp.pid 2>/dev/null || true
+        if [ -f "$UPDATER_PID_FILE" ]; then
+            kill -9 "$(cat "$UPDATER_PID_FILE" 2>/dev/null)" 2>/dev/null || true
+            rm -f "$UPDATER_PID_FILE"
+        fi
         [ "$K" -eq 1 ] && echo "[OK] Stopped" || echo "[INFO] Not running"
         exit 0
         ;;
@@ -75,12 +84,30 @@ if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null; t
     exit 0
 fi
 
+# Kiem tra tien trinh agent dang chay san trong he thong de tranh xung dot va loi fail to start
+EXISTING_P=$(pgrep -x "$BIN_NAME" 2>/dev/null || pgrep -f "$BIN" 2>/dev/null)
+if [ -n "$EXISTING_P" ]; then
+    echo "$EXISTING_P" > "$PID_FILE"
+    echo "[OK] Already running (PID: $(echo $EXISTING_P | tr '\n' ' '))"
+    exit 0
+fi
+
 nohup "$BIN" "$@" > "$LOG_FILE" 2>&1 &
 PID=$!
 echo "$PID" > "$PID_FILE"
 sleep 1
 
 if kill -0 "$PID" 2>/dev/null; then
+    # Khoi chay auto git pull worker moi 1h (try-catch, fail thi skip de khong anh huong agent)
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        (
+            while true; do
+                sleep 3600
+                git pull --rebase --autostash >/dev/null 2>&1 || git pull --ff-only >/dev/null 2>&1 || git pull >/dev/null 2>&1 || true
+            done
+        ) >/dev/null 2>&1 &
+        echo $! > "$UPDATER_PID_FILE"
+    fi
     echo "[OK] Started (PID: $PID)"
     exit 0
 fi

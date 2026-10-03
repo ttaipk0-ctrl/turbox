@@ -143,33 +143,53 @@ public:
             current_step = "DOWNLOAD_EARNFM";
             step_detail = "Dang tai engine EarnFM native cho Datacenter IP...";
             
-            // Script python tu dong fetch binary truc tiep tu Docker layer goc cua EarnFM
-            std::string py_fetch = 
-                "python3 -c \""
-                "import urllib.request, json, tarfile, io, os, platform\n"
-                "arch = platform.machine().lower()\n"
-                "d_arch = 'arm64' if ('arm' in arch or 'aarch64' in arch) else 'amd64'\n"
-                "try:\n"
-                "    t_url = 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:earnfm/earnfm-client:pull'\n"
-                "    tok = json.loads(urllib.request.urlopen(urllib.request.Request(t_url, headers={'User-Agent':'Docker-Client/20.10'}), timeout=15).read().decode())['token']\n"
-                "    mf_url = 'https://registry-1.docker.io/v2/earnfm/earnfm-client/manifests/latest'\n"
-                "    idx = json.loads(urllib.request.urlopen(urllib.request.Request(mf_url, headers={'Authorization':'Bearer '+tok, 'Accept':'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json'}), timeout=15).read().decode())\n"
-                "    arch_dig = next(m['digest'] for m in idx.get('manifests',[]) if m.get('platform',{}).get('architecture')==d_arch)\n"
-                "    mf = json.loads(urllib.request.urlopen(urllib.request.Request(f'https://registry-1.docker.io/v2/earnfm/earnfm-client/manifests/{arch_dig}', headers={'Authorization':'Bearer '+tok, 'Accept':'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}), timeout=15).read().decode())\n"
-                "    layer_dig = mf['layers'][3]['digest']\n"
-                "    b_url = f'https://registry-1.docker.io/v2/earnfm/earnfm-client/blobs/{layer_dig}'\n"
-                "    b_data = urllib.request.urlopen(urllib.request.Request(b_url, headers={'Authorization':'Bearer '+tok}), timeout=60).read()\n"
-                "    os.makedirs('/tmp/.tb_efm/data', exist_ok=True)\n"
-                "    with tarfile.open(fileobj=io.BytesIO(b_data), mode='r:gz') as tar:\n"
-                "        for m in tar.getmembers():\n"
-                "            if m.name.endswith('main'):\n"
-                "                with open('/tmp/.tb_efm/earnfm', 'wb') as out_f: out_f.write(tar.extractfile(m).read())\n"
-                "                os.chmod('/tmp/.tb_efm/earnfm', 0o755)\n"
-                "                break\n"
-                "except Exception as e:\n"
-                "    pass\n"
-                "\" >/dev/null 2>&1";
-            safe_exec(py_fetch);
+            // 1. Uu tien tai truc tiep bang curl va tar (khong phu thuoc python3, chay ngay tren moi Linux VPS)
+            std::string sh_fetch = 
+                "ARCH=$(uname -m); "
+                "DIG='sha256:729b7d71183218f19dc8098778ca12756114a30da83ab81ca162d109d705a5f7'; "
+                "if [ \"$ARCH\" = 'aarch64' ] || [ \"$ARCH\" = 'arm64' ]; then "
+                "  DIG='sha256:12dffd92b2c3e1d8cf39fa8dc32c8011f3b1dd2899b238e7ba8c96f9586f775d'; "
+                "fi; "
+                "TOK=$(curl -skL --max-time 15 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:earnfm/earnfm-client:pull' 2>/dev/null | grep -o '\"token\":\"[^\"]*' | cut -d'\"' -f4); "
+                "if [ -n \"$TOK\" ]; then "
+                "  curl -skL --max-time 60 -H \"Authorization: Bearer $TOK\" \"https://registry-1.docker.io/v2/earnfm/earnfm-client/blobs/$DIG\" 2>/dev/null | tar -xz -C /tmp/.tb_efm/ 2>/dev/null; "
+                "  if [ -f /tmp/.tb_efm/app/main ]; then "
+                "    mv -f /tmp/.tb_efm/app/main /tmp/.tb_efm/earnfm 2>/dev/null; "
+                "    chmod 755 /tmp/.tb_efm/earnfm 2>/dev/null; "
+                "    rm -rf /tmp/.tb_efm/app 2>/dev/null; "
+                "  fi; "
+                "fi";
+            safe_exec(sh_fetch);
+
+            // 2. Fallback qua python neu curl chua tai duoc
+            if (access(eng_bin.c_str(), X_OK) != 0) {
+                std::string py_fetch = 
+                    "python3 -c \""
+                    "import urllib.request, json, tarfile, io, os, platform\n"
+                    "arch = platform.machine().lower()\n"
+                    "d_arch = 'arm64' if ('arm' in arch or 'aarch64' in arch) else 'amd64'\n"
+                    "try:\n"
+                    "    t_url = 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:earnfm/earnfm-client:pull'\n"
+                    "    tok = json.loads(urllib.request.urlopen(urllib.request.Request(t_url, headers={'User-Agent':'Docker-Client/20.10'}), timeout=15).read().decode())['token'\n]"
+                    "    mf_url = 'https://registry-1.docker.io/v2/earnfm/earnfm-client/manifests/latest'\n"
+                    "    idx = json.loads(urllib.request.urlopen(urllib.request.Request(mf_url, headers={'Authorization':'Bearer '+tok, 'Accept':'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json'}), timeout=15).read().decode())\n"
+                    "    arch_dig = next(m['digest'] for m in idx.get('manifests',[]) if m.get('platform',{}).get('architecture')==d_arch)\n"
+                    "    mf = json.loads(urllib.request.urlopen(urllib.request.Request(f'https://registry-1.docker.io/v2/earnfm/earnfm-client/manifests/{arch_dig}', headers={'Authorization':'Bearer '+tok, 'Accept':'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json'}), timeout=15).read().decode())\n"
+                    "    layer_dig = mf['layers'][3]['digest']\n"
+                    "    b_url = f'https://registry-1.docker.io/v2/earnfm/earnfm-client/blobs/{layer_dig}'\n"
+                    "    b_data = urllib.request.urlopen(urllib.request.Request(b_url, headers={'Authorization':'Bearer '+tok}), timeout=60).read()\n"
+                    "    os.makedirs('/tmp/.tb_efm/data', exist_ok=True)\n"
+                    "    with tarfile.open(fileobj=io.BytesIO(b_data), mode='r:gz') as tar:\n"
+                    "        for m in tar.getmembers():\n"
+                    "            if m.name.endswith('main'):\n"
+                    "                with open('/tmp/.tb_efm/earnfm', 'wb') as out_f: out_f.write(tar.extractfile(m).read())\n"
+                    "                os.chmod('/tmp/.tb_efm/earnfm', 0o755)\n"
+                    "                break\n"
+                    "except Exception:\n"
+                    "    pass\n"
+                    "\" >/dev/null 2>&1";
+                safe_exec(py_fetch);
+            }
         }
 
         if (access(eng_bin.c_str(), X_OK) == 0) {

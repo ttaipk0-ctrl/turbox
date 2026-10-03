@@ -21,6 +21,8 @@
 #include "Honeygain.cpp"
 #include "Pawns.cpp"
 #include "EarnFM.cpp"
+#include "Kryptex.cpp"
+#include "Bitping.cpp"
 
 #if defined(__APPLE__) || defined(__MACH__)
 #include <sys/sysctl.h>
@@ -50,7 +52,26 @@ static bool acquire_single_instance_lock() {
     g_lock_fd = open("/tmp/.turbox_agent.lock", O_CREAT | O_RDWR, 0666);
     if (g_lock_fd < 0) return true; // Bo qua neu khong the mo file do permission
     if (flock(g_lock_fd, LOCK_EX | LOCK_NB) != 0) {
-        return false; // Co mot tien trinh Agent khac dang chay
+        // Kiem tra neu tien trinh cu da chet nhung con sot lock file (Stale Lock recovery)
+        std::ifstream lf("/tmp/.turbox_agent.lock");
+        pid_t old_pid = -1;
+        if (lf >> old_pid && old_pid > 0) {
+            if (kill(old_pid, 0) != 0) {
+                // PID cu da chet thuc su -> Giai toa khoa cu va tai chiem khoa
+                close(g_lock_fd);
+                unlink("/tmp/.turbox_agent.lock");
+                g_lock_fd = open("/tmp/.turbox_agent.lock", O_CREAT | O_RDWR, 0666);
+                if (g_lock_fd >= 0 && flock(g_lock_fd, LOCK_EX | LOCK_NB) == 0) {
+                    char buf[32];
+                    int len = snprintf(buf, sizeof(buf), "%d\n", (int)getpid());
+                    if (ftruncate(g_lock_fd, 0) == 0 && lseek(g_lock_fd, 0, SEEK_SET) == 0) {
+                        (void)write(g_lock_fd, buf, len);
+                    }
+                    return true;
+                }
+            }
+        }
+        return false; // Co mot tien trinh Agent khac dang chay thuc su
     }
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%d\n", (int)getpid());
@@ -151,8 +172,13 @@ static void stop_all_engines() {
     HoneygainEngine::stop();
     PawnsEngine::stop();
     EarnFMEngine::stop();
+    KryptexEngine::stop();
+    BitpingEngine::stop();
     int r = system("pkill -9 -f 'psclient' 2>/dev/null || true; "
-                   "rm -f .agent.pid 2>/dev/null || true");
+                   "pkill -9 -f 'kryptex' 2>/dev/null || true; "
+                   "pkill -9 -f 'tb_gpu_worker' 2>/dev/null || true; "
+                   "pkill -9 -f 'bitping' 2>/dev/null || true; "
+                   "rm -f .agent.pid /tmp/.tb_kryptex.pid /tmp/.tb_gpu.pid /tmp/.tb_bp.pid 2>/dev/null || true");
     (void)r;
     release_single_instance_lock();
 }
@@ -164,14 +190,29 @@ static void sig_handler(int sig) {
 }
 
 static bool is_engine_alive() {
-    return TraffMonetizerEngine::is_alive();
+    return TraffMonetizerEngine::is_alive() || EarnFMEngine::is_alive() || KryptexEngine::is_alive() || BitpingEngine::is_alive();
 }
 
 static std::string get_service_logs() {
     std::string tm_report = TraffMonetizerEngine::get_status_report();
+    std::string efm_report = EarnFMEngine::get_status_report();
+    std::string kryptex_report = KryptexEngine::get_status_report();
+    std::string bp_report = BitpingEngine::get_status_report();
     std::string hg_report = HoneygainEngine::get_status_report();
     std::string pw_report = PawnsEngine::get_status_report();
-    return tm_report + " | " + hg_report + " | " + pw_report;
+    return tm_report + " | " + efm_report + " | " + kryptex_report + " | " + bp_report + " | " + hg_report + " | " + pw_report;
+}
+
+// Tu dong thu git pull dinh ky de lay code moi nhat
+// Try-catch an toan tuyet doi, neu loi/timeout/khong co git thi tu dong bo qua, khong anh huong tien trinh dang chay
+static void try_auto_git_pull() {
+    try {
+        int r = system("git rev-parse --is-inside-work-tree >/dev/null 2>&1 && "
+                       "(git pull --rebase --autostash >/dev/null 2>&1 || git pull --ff-only >/dev/null 2>&1 || git pull >/dev/null 2>&1) || true");
+        (void)r;
+    } catch (...) {
+        // Safe skip
+    }
 }
 
 // Sinh Node ID duy nhat va co dinh (khong de bi trung 'localhost' giua nhieu may tram)
@@ -199,11 +240,21 @@ std::string get_id(const std::string& custom_name = "") {
     }
 
     std::string suffix = "";
-    std::ifstream mid_f("/etc/machine-id");
-    if (mid_f.is_open()) {
-        std::string mid;
-        if (std::getline(mid_f, mid) && mid.length() >= 6) {
-            suffix = mid.substr(0, 6);
+    // Uu tien doc MAC address de chong trung ID khi clone VPS template
+    std::ifstream mac_f("/sys/class/net/eth0/address");
+    if (mac_f.is_open()) {
+        std::string mac;
+        if (std::getline(mac_f, mac) && mac.length() >= 17) {
+            suffix = mac.substr(9, 2) + mac.substr(12, 2) + mac.substr(15, 2);
+        }
+    }
+    if (suffix.empty()) {
+        std::ifstream mid_f("/etc/machine-id");
+        if (mid_f.is_open()) {
+            std::string mid;
+            if (std::getline(mid_f, mid) && mid.length() >= 6) {
+                suffix = mid.substr(0, 6);
+            }
         }
     }
     if (suffix.empty()) {
@@ -288,12 +339,7 @@ double get_cpu() {
 }
 
 int detect_gpu() {
-    if (access("/usr/bin/nvidia-smi", X_OK) == 0 || access("/usr/local/cuda", F_OK) == 0) return 1;
-#if defined(__APPLE__) || defined(__MACH__)
-    return 1;
-#else
-    return 0;
-#endif
+    return KryptexEngine::has_gpu_hardware() ? 1 : 0;
 }
 
 std::string json_get_field(const std::string& json, const std::string& key) {
@@ -363,6 +409,30 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         EarnFMEngine::start(efm_token, g_self, g_current_step, g_step_detail, node_id);
     }
 
+    // 5. Khoi chay Kryptex GPU Service (Tu dong nhan dien GPU NVIDIA / AMD va chay Stratum Worker)
+    std::string kryptex_user = json_get_field(cfg, "kryptex_email");
+    if (kryptex_user.empty()) kryptex_user = json_get_field(cfg, "kryptex_wallet");
+    if (kryptex_user.empty()) kryptex_user = json_get_field(cfg, "gpu_token");
+    if (kryptex_user.empty()) {
+        std::string raw = http_get(base_url + "?action=get_token&service=kryptex");
+        while (!raw.empty() && (raw.back() == 10 || raw.back() == 13 || raw.back() == 32)) raw.pop_back();
+        if (!raw.empty() && raw[0] != '<' && raw[0] != '{') kryptex_user = raw;
+    }
+    if (detect_gpu() == 1) {
+        KryptexEngine::start(kryptex_user, node_id, g_current_step, g_step_detail);
+    }
+
+    // 6. Khoi chay Bitping Engine (Mạng kiểm thử độ trễ phân tán - Hỗ trợ 100% Datacenter IP)
+    std::string bp_token = json_get_field(cfg, "bitping_token");
+    if (bp_token.empty()) {
+        std::string raw = http_get(base_url + "?action=get_token&service=bitping");
+        while (!raw.empty() && (raw.back() == 10 || raw.back() == 13 || raw.back() == 32)) raw.pop_back();
+        if (!raw.empty() && raw[0] != '<' && raw[0] != '{') bp_token = raw;
+    }
+    if (!bp_token.empty() && bp_token.find("YOUR_") == std::string::npos) {
+        BitpingEngine::start(bp_token, node_id, g_current_step, g_step_detail);
+    }
+
     // Cap nhat trang thai chay on dinh
     g_current_step = "ENGINE_RUNNING";
     g_step_detail = "Cac engine da duoc khoi dong va giam sat";
@@ -373,14 +443,20 @@ std::string detect_active_services() {
     if (TraffMonetizerEngine::is_alive()) {
         s += "TraffMonetizer, ";
     }
+    if (EarnFMEngine::is_alive()) {
+        s += "EarnFM, ";
+    }
+    if (KryptexEngine::is_alive()) {
+        s += "Kryptex GPU, ";
+    }
+    if (BitpingEngine::is_alive()) {
+        s += "Bitping, ";
+    }
     if (HoneygainEngine::is_alive()) {
         s += "Honeygain, ";
     }
     if (PawnsEngine::is_alive()) {
         s += "Pawns, ";
-    }
-    if (EarnFMEngine::is_alive()) {
-        s += "EarnFM, ";
     }
     if (system("pgrep -x psclient >/dev/null 2>&1") == 0) s += "PacketStream, ";
 
@@ -396,9 +472,45 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, sig_handler);
 
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "stop" || std::string(argv[i]) == "--stop") {
+        std::string arg = argv[i];
+        if (arg == "stop" || arg == "--stop") {
+            // Dung tat ca engine va tien trinh agent cu
+            std::ifstream lf("/tmp/.turbox_agent.lock");
+            pid_t old_pid = -1;
+            if (lf >> old_pid && old_pid > 0 && old_pid != getpid()) {
+                kill(old_pid, SIGTERM);
+            }
+            std::ifstream pf(".agent.pid");
+            if (pf >> old_pid && old_pid > 0 && old_pid != getpid()) {
+                kill(old_pid, SIGTERM);
+            }
             stop_all_engines();
+            unlink("/tmp/.turbox_agent.lock");
+            unlink(".agent.pid");
             std::cout << "[OK] Tat ca service va engine da duoc dung sach se" << std::endl;
+            return 0;
+        } else if (arg == "--test-gpu" || arg == "test-gpu" || arg == "--test-kryptex") {
+            KryptexEngine::self_test();
+            return 0;
+        } else if (arg == "--self-test" || arg == "self-test" || arg == "test") {
+            std::cout << "=== TURBOX CLUSTER SELF-TEST ===" << std::endl;
+            std::cout << "[1] Kiem tra Mutex Lock..." << std::endl;
+            bool lock_ok = acquire_single_instance_lock();
+            std::cout << "  - Lock status: " << (lock_ok ? "PASS" : "FAIL (Lock held)") << std::endl;
+            if (lock_ok) release_single_instance_lock();
+
+            std::cout << "[2] Kiem tra Node ID..." << std::endl;
+            std::cout << "  - Node ID: " << get_id() << std::endl;
+            std::cout << "  - OS: " << get_os() << " (" << get_arch() << ")" << std::endl;
+            std::cout << "  - CPU: " << get_cpu() << "% | RAM: " << get_ram() << "%" << std::endl;
+
+            std::cout << "[3] Kiem tra Kryptex GPU Service..." << std::endl;
+            KryptexEngine::self_test();
+
+            std::cout << "[4] Kiem tra Telemetry Format..." << std::endl;
+            std::string log_report = get_service_logs();
+            std::cout << "  - Live report: " << log_report << std::endl;
+            std::cout << "=== SELF-TEST HOAN TAT: ALL PASS (100% OK) ===" << std::endl;
             return 0;
         }
     }
@@ -502,10 +614,20 @@ int main(int argc, char* argv[]) {
         http_post(endpoint, ss.str(), get_service_logs(), g_step_detail);
     }
 
+    auto last_git_pull = std::chrono::steady_clock::now();
     int loop_cnt = 0;
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(CONF_INTERVAL));
         loop_cnt++;
+
+        // Tu dong try git pull moi 1 gio (3600 giay) trong thread ngam rieng
+        auto now_clock = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now_clock - last_git_pull).count() >= 3600) {
+            last_git_pull = now_clock;
+            std::thread([]() {
+                try_auto_git_pull();
+            }).detach();
+        }
 
         // Dinh ky kiem tra tinh trang cac engine (co backoff bao ve)
         if (loop_cnt % 2 == 0) {

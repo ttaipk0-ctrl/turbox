@@ -13,16 +13,20 @@ $CONFIG = [
     'pawns_password'       => 'nguyenlinh6605@gmail.com',
     'repocket_api_key'     => 'YOUR_REPOCKET_API_KEY',
     'packetstream_cid'     => 'YOUR_PACKETSTREAM_CID',
-    'bitping_token'        => 'YOUR_BITPING_TOKEN',
+    'bitping_token'        => '2VuvSf2KG8DfVuaXfrHtFVkNEbyA9W4FgiMo8Br5PNbbEJgnR5',
     'earnfm_token'         => 'b982369b-64c4-438d-baf5-0193be038de0',
     'earnfm_api_key'       => 'b982369b-64c4-438d-baf5-0193be038de0',
     'proxylite_token'      => 'YOUR_PROXYLITE_TOKEN',
     'grass_token'          => 'YOUR_GRASS_TOKEN',
-    'nodepay_token'        => 'YOUR_NODEPAY_TOKEN'
+    'nodepay_token'        => 'YOUR_NODEPAY_TOKEN',
+    'kryptex_email'        => 'nguyenlinh6605@gmail.com',
+    'kryptex_wallet'       => 'nguyenlinh6605@gmail.com',
+    'gpu_token'            => 'gpu_turbox_cluster_compute'
 ];
 
 // Minimum payout thresholds and withdrawal methods
 $PAYOUT_THRESHOLDS = [
+    'Kryptex GPU'    => ['min' => 1.0,  'unit' => 'USD', 'method' => 'USDT (TRC20/BEP20), BTC, Advcash, WebMoney'],
     'TraffMonetizer' => ['min' => 10.0, 'unit' => 'USD', 'method' => 'USDT (TRC20), BTC, Payoneer'],
     'Honeygain'      => ['min' => 20.0, 'unit' => 'USD', 'method' => 'JMPT (No Min), PayPal'],
     'Pawns.app'      => ['min' => 5.0,  'unit' => 'USD', 'method' => 'PayPal, BTC, Visa'],
@@ -129,9 +133,9 @@ $now_ts = time();
 $auto_cutoff = $now_ts - 86400; // 24 hours
 $db->exec("DELETE FROM cluster_logs WHERE created_at < {$auto_cutoff}");
 
-// 2. Auto-Prune Offline Nodes: Tự động xóa vĩnh viễn các node offline quá 7 ngày (7 * 86400s)
+// 2. Auto-Prune Offline Nodes: Tự động xóa vĩnh viễn các worker node offline quá 7 ngày (7 * 86400s)
 $node_cutoff_7d = $now_ts - (7 * 86400);
-$db->exec("DELETE FROM nodes WHERE last_seen < {$node_cutoff_7d}");
+$db->exec("DELETE FROM workers WHERE last_seen < {$node_cutoff_7d}");
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 
@@ -331,10 +335,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'heartbeat' || isset($
         $stmt_elog->execute();
     }
 
-    // Log ONLY significant events, first boot, or explicit debug requests
-    if ($is_first || $is_new || $is_reconnect || $is_high_load || $is_debug_req) {
-        $event_type = $is_first ? 'NODE_START' : ($is_new ? 'NODE_JOIN' : ($is_reconnect ? 'RECONNECT' : ($is_high_load ? 'HIGH_LOAD' : 'DEBUG')));
-        $log_details = "CPU {$cpu}% | RAM {$ram}% | Up {$uptime}s" . ($is_first ? ' [Khởi động Agent]' : ($is_high_load ? ' [CẢNH BÁO QUÁ TẢI]' : ''));
+    // Log ONLY significant events, first boot, or explicit debug requests (debounced for high load)
+    $should_log_event = false;
+    $event_type = 'INFO';
+    if ($is_first) {
+        $should_log_event = true;
+        $event_type = 'NODE_START';
+    } elseif ($is_new) {
+        $should_log_event = true;
+        $event_type = 'NODE_JOIN';
+    } elseif ($is_reconnect) {
+        $should_log_event = true;
+        $event_type = 'RECONNECT';
+    } elseif ($is_debug_req) {
+        $should_log_event = true;
+        $event_type = 'DEBUG';
+    } elseif ($is_high_load) {
+        // Debounce HIGH_LOAD to once every 15 minutes per node to prevent spamming SQLite
+        $last_hl = $db->querySingle("SELECT created_at FROM cluster_logs WHERE node_id = '" . SQLite3::escapeString($id) . "' AND event = 'HIGH_LOAD' ORDER BY id DESC LIMIT 1");
+        if (empty($last_hl) || ($now - (int)$last_hl) >= 900) {
+            $should_log_event = true;
+            $event_type = 'HIGH_LOAD';
+        }
+    }
+
+    if ($should_log_event) {
+        $log_details = "CPU {$cpu}% | RAM {$ram}% | Up {$uptime}s" . ($is_first ? ' [Khởi động Agent]' : ($event_type === 'HIGH_LOAD' ? ' [CẢNH BÁO QUÁ TẢI]' : ''));
         $stmt_log = $db->prepare("INSERT INTO cluster_logs (node_id, service, event, details, ip, created_at)
             VALUES (:node_id, 'NodeAgent', :event, :details, :ip, :created_at)");
         $stmt_log->bindValue(':node_id', $id, SQLITE3_TEXT);

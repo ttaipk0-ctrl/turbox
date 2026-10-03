@@ -8,10 +8,6 @@ $CONFIG = [
     'traffmonetizer_dashboard_token' => '',
     'earnfm_token'         => 'b982369b-64c4-438d-baf5-0193be038de0',
     'earnfm_api_key'       => 'b982369b-64c4-438d-baf5-0193be038de0',
-    'bitping_token'        => '2VuvSf2KG8DfVuaXfrHtFVkNEbyA9W4FgiMo8Br5PNbbEJgnR5',
-    'kryptex_email'        => 'nguyenlinh6605@gmail.com',
-    'kryptex_wallet'       => 'krxXV8DVM7',
-    'kryptex_username'     => 'krxXV8DVM7',
     'honeygain_email'      => 'nguyenlinh6605@gmail.com',
     'honeygain_password'   => 'nguyenlinh6605@gmail.com',
     'pawns_token'          => 'YOUR_PAWNS_API_TOKEN',
@@ -21,10 +17,8 @@ $CONFIG = [
 
 // Minimum payout thresholds and withdrawal methods for implemented engines
 $PAYOUT_THRESHOLDS = [
-    'Kryptex GPU'    => ['min' => 1.0,  'unit' => 'USD', 'method' => 'USDT (TRC20/BEP20), BTC, Advcash, WebMoney'],
     'TraffMonetizer' => ['min' => 10.0, 'unit' => 'USD', 'method' => 'USDT (TRC20), BTC, Payoneer'],
     'EarnFM'         => ['min' => 5.0,  'unit' => 'USD', 'method' => 'Crypto, PayPal, GiftCard'],
-    'Bitping'        => ['min' => 5.0,  'unit' => 'USD', 'method' => 'Solana (SOL), USDT'],
     'Honeygain'      => ['min' => 20.0, 'unit' => 'USD', 'method' => 'JMPT (No Min), PayPal'],
     'Pawns.app'      => ['min' => 5.0,  'unit' => 'USD', 'method' => 'PayPal, BTC, Visa']
 ];

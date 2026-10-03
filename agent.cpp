@@ -21,8 +21,6 @@
 #include "Honeygain.cpp"
 #include "Pawns.cpp"
 #include "EarnFM.cpp"
-#include "Kryptex.cpp"
-#include "Bitping.cpp"
 
 #if defined(__APPLE__) || defined(__MACH__)
 #include <sys/sysctl.h>
@@ -172,9 +170,7 @@ static void stop_all_engines() {
     HoneygainEngine::stop();
     PawnsEngine::stop();
     EarnFMEngine::stop();
-    KryptexEngine::stop();
-    BitpingEngine::stop();
-    int r = system("rm -f .agent.pid /tmp/.tb_kryptex.pid /tmp/.tb_bp.pid 2>/dev/null || true");
+    int r = system("rm -f .agent.pid /tmp/.tb_*.pid 2>/dev/null || true");
     (void)r;
     release_single_instance_lock();
 }
@@ -186,17 +182,15 @@ static void sig_handler(int sig) {
 }
 
 static bool is_engine_alive() {
-    return TraffMonetizerEngine::is_alive() || EarnFMEngine::is_alive() || KryptexEngine::is_alive() || BitpingEngine::is_alive();
+    return TraffMonetizerEngine::is_alive() || EarnFMEngine::is_alive() || HoneygainEngine::is_alive() || PawnsEngine::is_alive();
 }
 
 static std::string get_service_logs() {
     std::string tm_report = TraffMonetizerEngine::get_status_report();
     std::string efm_report = EarnFMEngine::get_status_report();
-    std::string kryptex_report = KryptexEngine::get_status_report();
-    std::string bp_report = BitpingEngine::get_status_report();
     std::string hg_report = HoneygainEngine::get_status_report();
     std::string pw_report = PawnsEngine::get_status_report();
-    return tm_report + " | " + efm_report + " | " + kryptex_report + " | " + bp_report + " | " + hg_report + " | " + pw_report;
+    return tm_report + " | " + efm_report + " | " + hg_report + " | " + pw_report;
 }
 
 // Tu dong thu git pull dinh ky de lay code moi nhat
@@ -335,7 +329,7 @@ double get_cpu() {
 }
 
 int detect_gpu() {
-    return KryptexEngine::has_gpu_hardware() ? 1 : 0;
+    return 0;
 }
 
 std::string json_get_field(const std::string& json, const std::string& key) {
@@ -405,31 +399,6 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         EarnFMEngine::start(efm_token, g_self, g_current_step, g_step_detail, node_id);
     }
 
-    // 5. Khoi chay Kryptex GPU Service (Tu dong nhan dien GPU NVIDIA / AMD va chay Stratum Worker)
-    std::string kryptex_user = json_get_field(cfg, "kryptex_username");
-    if (kryptex_user.empty()) kryptex_user = json_get_field(cfg, "kryptex_email");
-    if (kryptex_user.empty()) kryptex_user = json_get_field(cfg, "kryptex_wallet");
-    if (kryptex_user.empty()) kryptex_user = json_get_field(cfg, "gpu_token");
-    if (kryptex_user.empty()) {
-        std::string raw = http_get(base_url + "?action=get_token&service=kryptex");
-        while (!raw.empty() && (raw.back() == 10 || raw.back() == 13 || raw.back() == 32)) raw.pop_back();
-        if (!raw.empty() && raw[0] != '<' && raw[0] != '{') kryptex_user = raw;
-    }
-    if (detect_gpu() == 1) {
-        KryptexEngine::start(kryptex_user, node_id, g_current_step, g_step_detail);
-    }
-
-    // 6. Khoi chay Bitping Engine (Mạng kiểm thử độ trễ phân tán - Hỗ trợ 100% Datacenter IP)
-    std::string bp_token = json_get_field(cfg, "bitping_token");
-    if (bp_token.empty()) {
-        std::string raw = http_get(base_url + "?action=get_token&service=bitping");
-        while (!raw.empty() && (raw.back() == 10 || raw.back() == 13 || raw.back() == 32)) raw.pop_back();
-        if (!raw.empty() && raw[0] != '<' && raw[0] != '{') bp_token = raw;
-    }
-    if (!bp_token.empty() && bp_token.find("YOUR_") == std::string::npos) {
-        BitpingEngine::start(bp_token, node_id, g_current_step, g_step_detail);
-    }
-
     // Cap nhat trang thai chay on dinh
     g_current_step = "ENGINE_RUNNING";
     g_step_detail = "Cac engine da duoc khoi dong va giam sat";
@@ -442,12 +411,6 @@ std::string detect_active_services() {
     }
     if (EarnFMEngine::is_alive()) {
         s += "EarnFM, ";
-    }
-    if (KryptexEngine::is_alive()) {
-        s += "Kryptex GPU, ";
-    }
-    if (BitpingEngine::is_alive()) {
-        s += "Bitping, ";
     }
     if (HoneygainEngine::is_alive()) {
         s += "Honeygain, ";
@@ -485,9 +448,6 @@ int main(int argc, char* argv[]) {
             unlink(".agent.pid");
             std::cout << "[OK] Tat ca service va engine da duoc dung sach se" << std::endl;
             return 0;
-        } else if (arg == "--test-gpu" || arg == "test-gpu" || arg == "--test-kryptex") {
-            KryptexEngine::self_test();
-            return 0;
         } else if (arg == "--self-test" || arg == "self-test" || arg == "test") {
             std::cout << "=== TURBOX CLUSTER SELF-TEST ===" << std::endl;
             std::cout << "[1] Kiem tra Mutex Lock..." << std::endl;
@@ -500,10 +460,7 @@ int main(int argc, char* argv[]) {
             std::cout << "  - OS: " << get_os() << " (" << get_arch() << ")" << std::endl;
             std::cout << "  - CPU: " << get_cpu() << "% | RAM: " << get_ram() << "%" << std::endl;
 
-            std::cout << "[3] Kiem tra Kryptex GPU Service..." << std::endl;
-            KryptexEngine::self_test();
-
-            std::cout << "[4] Kiem tra Telemetry Format..." << std::endl;
+            std::cout << "[3] Kiem tra Telemetry Format..." << std::endl;
             std::string log_report = get_service_logs();
             std::cout << "  - Live report: " << log_report << std::endl;
             std::cout << "=== SELF-TEST HOAN TAT: ALL PASS (100% OK) ===" << std::endl;

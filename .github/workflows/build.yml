@@ -9,8 +9,6 @@ on:
       - 'Honeygain.cpp'
       - 'Pawns.cpp'
       - 'EarnFM.cpp'
-      - 'Kryptex.cpp'
-      - 'Bitping.cpp'
       - '.github/workflows/build.yml'
   workflow_dispatch:
 

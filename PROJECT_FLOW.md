@@ -26,19 +26,19 @@
 
 4. agent.cpp LÀ TRUNG TÂM ĐIỀU PHỐI ĐỘC LẬP TRÊN WORKER (Thuật toán tinh gọn)
    - Tự đọc chính nó để trích xuất payload engine ra thư mục đệm /tmp/.
-   - Cơ chế Native Engine (TraffMonetizer): Chạy gói self-contained độc lập với cờ token đầy đủ `start accept --token "<TOKEN>"`, kèm đường dẫn liên kết thư viện động (libssl, libcrypto, libicu) không phụ thuộc package hệ thống.
-   - Quản lý Credential & Tham số độc lập:
-     + Honeygain: Kiểm tra nghiêm ngặt cả email & password trước khi khởi chạy. Nếu thiếu tham số, ghi rõ `[HG] Skipped: Missing credentials` vào log và không spawn tiến trình.
-     + TraffMonetizer: Nạp token từ server và khởi chạy trực tiếp với CLI arguments.
+   - Hệ thống tập trung vào 4 Engine chuẩn đã implement native:
+     + **TraffMonetizer** (`TraffMonetizer.cpp`): Tối ưu chia sẻ băng thông đa luồng, hỗ trợ cả Datacenter và Residential IP.
+     + **EarnFM** (`EarnFM.cpp`): Tối ưu tuyệt đối 100% cho IP VPS / Datacenter.
+     + **Honeygain** (`Honeygain.cpp`): Dành cho máy IP dân cư (Residential IP / Home / Office).
+     + **Pawns** (`Pawns.cpp`): Dành cho máy IP dân cư (Residential IP / Home / Office).
    - Tách biệt Log cho từng Process:
      + TraffMonetizer ghi ra `/tmp/.tb_tm.log`
+     + EarnFM ghi ra `/tmp/.tb_efm.log`
      + Honeygain ghi ra `/tmp/.tb_hg.log`
+     + Pawns ghi ra `/tmp/.tb_pawns.log`
    - Bắt kết nối Socket thực tế & Parse 10 dòng log mới nhất:
      + Kiểm tra trạng thái kết nối TCP ESTABLISHED qua `/proc/net/tcp` (Linux) hoặc `lsof` (macOS).
-     + Đọc và parse 10 dòng log mới nhất, tạo báo cáo chuẩn hóa:
-       `[TM: PID 8120] Socket: ESTABLISHED | Log: Connecting to hub... Connected.`
-       `[HG] Not started (Missing credentials)`
-   - Gửi Telemetry phần cứng kèm Log Engine định kỳ 15 giây về turbox_server.php.
+     + Đọc và parse log mới nhất, tạo báo cáo chuẩn hóa gửi định kỳ 15 giây về turbox_server.php.
    - Tự hồi sinh (auto-revive) engine nếu bị crash hoặc tắt.
 
 5. turbox_server.php LÀ MASTER SERVER & DASHBOARD ĐIỀU HÀNH
@@ -54,6 +54,10 @@
 - PROJECT_FLOW.md: Bản đặc tả kiến trúc làm mỏ neo ngữ cảnh chống code sai lệch.
 - deploy.sh: Launcher siêu nhẹ (tìm binary và chạy).
 - agent.cpp: Mã nguồn C++ Worker (tự bung payload, chạy engine, telemetry).
+- TraffMonetizer.cpp: Engine TraffMonetizer native.
+- EarnFM.cpp: Engine EarnFM native cho Datacenter VPS.
+- Honeygain.cpp: Engine Honeygain native cho IP dân cư.
+- Pawns.cpp: Engine Pawns.app native cho IP dân cư.
 - .github/workflows/build.yml: GitHub Actions build cross-platform & merge engine vào binary.
 - turbox_server.php: Master server tiếp nhận heartbeat & dashboard điều hành.
 - bin/agent_*: 4 binary độc lập duy nhất của toàn hệ thống.
@@ -64,3 +68,11 @@
 1. GitHub Actions Build: Biên dịch agent.cpp -> Tải engine -> Merge payload -> Đẩy 4 file vào bin/.
 2. Triển khai máy con: git pull && ./deploy.sh
 3. Binary khởi chạy: Tự bung engine ra /tmp/ -> Nạp token -> Chạy native -> Gửi Telemetry lên turbox_server.php.
+
+---
+
+## IV. DANH SÁCH ENGINE BỊ LOẠI BỎ & GHI CHÚ KỸ THUẬT (REMOVED SERVICES & POST-MORTEM)
+1. **Kryptex (`Kryptex.cpp` - ĐÃ LOẠI BỎ HOÀN TOÀN):**
+   - **Lý do:** Google Colab, GCP và các nhà cung cấp Cloud VPS có cơ chế Virtual Machine Threat Detection nghiêm ngặt cấm đào coin (Cryptomining). Việc chạy miner sẽ bị hệ thống quét bộ nhớ/mạng và dẫn đến ban nick, khóa tài khoản vĩnh viễn. Để đảm bảo an toàn tuyệt đối cho người dùng, Kryptex đã bị loại bỏ hoàn toàn khỏi kiến trúc dự án.
+2. **Bitping (`Bitping.cpp` - ĐÃ LOẠI BỎ HOÀN TOÀN):**
+   - **Lý do:** Bitping có cơ chế kiểm tra năng lực (Capacity Check) khắt khe đòi hỏi quyền mạng cấp thấp (Raw ICMP Socket) và các ràng buộc tài nguyên mạng không phù hợp với môi trường VPS/container chuẩn (thường gây lỗi `"some protocol failed their capacity check"`). Do đó đã được loại bỏ hoàn toàn để giữ hệ thống tinh gọn, ổn định và tối ưu hiệu suất.

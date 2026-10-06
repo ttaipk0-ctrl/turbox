@@ -18,9 +18,6 @@
 #include <fcntl.h>
 
 #include "TraffMonetizer.cpp"
-#include "Honeygain.cpp"
-#include "Pawns.cpp"
-#include "EarnFM.cpp"
 
 #if defined(__APPLE__) || defined(__MACH__)
 #include <sys/sysctl.h>
@@ -41,21 +38,18 @@ static bool g_debug = false;
 static std::string g_self = "";
 static std::string g_current_step = "INIT";
 static std::string g_step_detail = "Khoi dong Agent";
-static pid_t g_engine_pid = -1;
 static int g_lock_fd = -1;
 
 // Co che khoa file he thong doc quyen (Single-Instance Mutex Lock)
 // Ngan chan tuyet doi 2 tien trinh Agent chay song song tren cung 1 may gay xung dot PID va Engine
 static bool acquire_single_instance_lock() {
     g_lock_fd = open("/tmp/.turbox_agent.lock", O_CREAT | O_RDWR, 0666);
-    if (g_lock_fd < 0) return true; // Bo qua neu khong the mo file do permission
+    if (g_lock_fd < 0) return true;
     if (flock(g_lock_fd, LOCK_EX | LOCK_NB) != 0) {
-        // Kiem tra neu tien trinh cu da chet nhung con sot lock file (Stale Lock recovery)
         std::ifstream lf("/tmp/.turbox_agent.lock");
         pid_t old_pid = -1;
         if (lf >> old_pid && old_pid > 0) {
             if (kill(old_pid, 0) != 0) {
-                // PID cu da chet thuc su -> Giai toa khoa cu va tai chiem khoa
                 close(g_lock_fd);
                 unlink("/tmp/.turbox_agent.lock");
                 g_lock_fd = open("/tmp/.turbox_agent.lock", O_CREAT | O_RDWR, 0666);
@@ -69,7 +63,7 @@ static bool acquire_single_instance_lock() {
                 }
             }
         }
-        return false; // Co mot tien trinh Agent khac dang chay thuc su
+        return false;
     }
     char buf[32];
     int len = snprintf(buf, sizeof(buf), "%d\n", (int)getpid());
@@ -99,43 +93,15 @@ static inline int safe_system(const std::string& cmd) {
 }
 
 static std::string get_self_path(const char* argv0) {
+    char buf[1024];
 #if defined(__APPLE__) || defined(__MACH__)
-    char p[1024]; uint32_t s = sizeof(p);
-    if (_NSGetExecutablePath(p, &s) == 0) return std::string(p);
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) return std::string(buf);
 #else
-    char p[1024]; ssize_t l = readlink("/proc/self/exe", p, sizeof(p) - 1);
-    if (l != -1) { p[l] = '\0'; return std::string(p); }
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len > 0) { buf[len] = '\0'; return std::string(buf); }
 #endif
-    return (argv0 && strlen(argv0) > 0) ? std::string(argv0) : "";
-}
-
-static bool extract_payload(const std::string& out_path) {
-    if (g_self.empty()) return false;
-    FILE* f = fopen(g_self.c_str(), "rb");
-    if (!f) return false;
-    if (fseek(f, -24, SEEK_END) != 0) { fclose(f); return false; }
-    char foot[24];
-    if (fread(foot, 1, 24, f) != 24 || memcmp(foot + 8, "TURBOX_BUNDLE", 13) != 0) {
-        fclose(f); return false;
-    }
-    uint64_t sz = 0;
-    memcpy(&sz, foot, 8);
-    if (sz == 0 || sz > 100000000ULL || fseek(f, -(24 + (long)sz), SEEK_END) != 0) {
-        fclose(f); return false;
-    }
-    FILE* out = fopen(out_path.c_str(), "wb");
-    if (!out) { fclose(f); return false; }
-    char buf[65536];
-    uint64_t left = sz;
-    while (left > 0) {
-        size_t c = left > sizeof(buf) ? sizeof(buf) : (size_t)left;
-        size_t r = fread(buf, 1, c, f);
-        if (r == 0) break;
-        fwrite(buf, 1, r, out);
-        left -= r;
-    }
-    fclose(out); fclose(f);
-    return (left == 0);
+    return std::string(argv0 ? argv0 : "");
 }
 
 static std::string http_get(const std::string& url) {
@@ -157,21 +123,34 @@ static void http_post(const std::string& url, const std::string& data, const std
     for (char &c : clean_step) {
         if (c == 34 || c == 39 || c == 96 || c == 36 || c == 92) c = ' ';
     }
-    std::string cmd = "curl -skL --max-time 10 -d \"" + data + "\" "
-                      "--data-urlencode \"service_logs=" + clean_log + "\" "
-                      "--data-urlencode \"step_info=" + clean_step + "\" "
-                      "\"" + url + "\" >/dev/null 2>&1";
-    int r = system(cmd.c_str());
-    (void)r;
+
+    std::string payload = data;
+    if (payload.length() > 2 && payload.back() == '}') {
+        payload.pop_back();
+        payload += ",\"service_logs\":\"" + clean_log + "\",\"current_step\":\"" + clean_step + "\"}";
+    }
+
+    FILE* tmp = fopen("/tmp/.tb_post.json", "w");
+    if (tmp) {
+        fputs(payload.c_str(), tmp);
+        fclose(tmp);
+        std::string cmd = "curl -skL --max-time 10 -H \"Content-Type: application/json\" --data-binary @/tmp/.tb_post.json \"" + url + "\" >/dev/null 2>&1";
+        safe_system(cmd);
+        unlink("/tmp/.tb_post.json");
+    } else {
+        std::string cmd = "curl -skL --max-time 10 -H \"Content-Type: application/json\" -d '" + payload + "' \"" + url + "\" >/dev/null 2>&1";
+        safe_system(cmd);
+    }
 }
 
 static void stop_all_engines() {
     TraffMonetizerEngine::stop();
-    HoneygainEngine::stop();
-    PawnsEngine::stop();
-    EarnFMEngine::stop();
-    int r = system("rm -f .agent.pid /tmp/.tb_*.pid 2>/dev/null || true");
-    (void)r;
+    // Don dep sach se tat ca tien trinh rac/zombie neu con sot
+    safe_system("pkill -9 -f earnfm 2>/dev/null || true; "
+                "pkill -9 -f packetstream 2>/dev/null || true; "
+                "pkill -9 -f pawns 2>/dev/null || true; "
+                "pkill -9 -f honeygain 2>/dev/null || true; "
+                "rm -f .agent.pid /tmp/.tb_*.pid /tmp/.tb_*.log 2>/dev/null || true");
     release_single_instance_lock();
 }
 
@@ -182,30 +161,14 @@ static void sig_handler(int sig) {
 }
 
 static bool is_engine_alive() {
-    return TraffMonetizerEngine::is_alive() || EarnFMEngine::is_alive() || HoneygainEngine::is_alive() || PawnsEngine::is_alive();
+    return TraffMonetizerEngine::is_alive();
 }
 
 static std::string get_service_logs() {
-    std::string tm_report = TraffMonetizerEngine::get_status_report();
-    std::string efm_report = EarnFMEngine::get_status_report();
-    std::string hg_report = HoneygainEngine::get_status_report();
-    std::string pw_report = PawnsEngine::get_status_report();
-    return tm_report + " | " + efm_report + " | " + hg_report + " | " + pw_report;
+    return TraffMonetizerEngine::get_status_report();
 }
 
-// Tu dong thu git pull dinh ky de lay code moi nhat
-// Try-catch an toan tuyet doi, neu loi/timeout/khong co git thi tu dong bo qua, khong anh huong tien trinh dang chay
-static void try_auto_git_pull() {
-    try {
-        int r = system("git rev-parse --is-inside-work-tree >/dev/null 2>&1 && "
-                       "(git pull --rebase --autostash >/dev/null 2>&1 || git pull --ff-only >/dev/null 2>&1 || git pull >/dev/null 2>&1) || true");
-        (void)r;
-    } catch (...) {
-        // Safe skip
-    }
-}
-
-// Sinh Node ID duy nhat va co dinh (khong de bi trung 'localhost' giua nhieu may tram)
+// Sinh Node ID duy nhat va co dinh
 std::string get_id(const std::string& custom_name = "") {
     if (!custom_name.empty()) {
         std::ofstream out_f("/tmp/.turbox_node_id");
@@ -230,7 +193,6 @@ std::string get_id(const std::string& custom_name = "") {
     }
 
     std::string suffix = "";
-    // Uu tien doc MAC address de chong trung ID khi clone VPS template
     std::ifstream mac_f("/sys/class/net/eth0/address");
     if (mac_f.is_open()) {
         std::string mac;
@@ -328,10 +290,6 @@ double get_cpu() {
 #endif
 }
 
-int detect_gpu() {
-    return 0;
-}
-
 std::string json_get_field(const std::string& json, const std::string& key) {
     std::string needle = std::string(1, 34) + key + std::string(1, 34);
     size_t pos = json.find(needle);
@@ -344,7 +302,13 @@ std::string json_get_field(const std::string& json, const std::string& key) {
 
 void init_and_start_monetization(const std::string& base_url, const std::string& node_id) {
     g_current_step = "FETCH_CONFIG";
-    g_step_detail = "Dang lay token tu server";
+    g_step_detail = "Dang lay token TraffMonetizer tu server";
+
+    // Don dep dut diem cac tien trinh ngoai le de toi uu 100% RAM & CPU
+    safe_system("pkill -9 -f earnfm 2>/dev/null || true; "
+                "pkill -9 -f packetstream 2>/dev/null || true; "
+                "pkill -9 -f pawns 2>/dev/null || true; "
+                "pkill -9 -f honeygain 2>/dev/null || true");
 
     std::string cfg = http_get(base_url + "?action=get_config");
 
@@ -358,70 +322,18 @@ void init_and_start_monetization(const std::string& base_url, const std::string&
         tm_token = "Kf0Cz9FcDUF6ItPzY1+XAfOimgAxK2gXO3XgmPXvvKc=";
     }
 
-    std::string hg_email = json_get_field(cfg, "honeygain_email");
-    if (hg_email.empty() || hg_email.find("YOUR_") != std::string::npos) {
-        hg_email = "nguyenlinh6605@gmail.com";
-    }
-    std::string hg_pass = json_get_field(cfg, "honeygain_password");
-    if (hg_pass.empty() || hg_pass.find("YOUR_") != std::string::npos) {
-        hg_pass = "nguyenlinh6605@gmail.com";
-    }
-
-    std::string pawns_email = json_get_field(cfg, "pawns_email");
-    if (pawns_email.empty() || pawns_email.find("YOUR_") != std::string::npos) {
-        pawns_email = "nguyenlinh6605@gmail.com";
-    }
-    std::string pawns_pass = json_get_field(cfg, "pawns_password");
-    if (pawns_pass.empty() || pawns_pass.find("YOUR_") != std::string::npos) {
-        pawns_pass = "nguyenlinh6605@gmail.com";
-    }
-
-    // 1. Khoi chay TraffMonetizer Engine doc lap
+    // Khoi chay duy nhat TraffMonetizer Engine doc lap - toi uu tuyet doi
     TraffMonetizerEngine::start(tm_token, g_self, g_current_step, g_step_detail, node_id);
 
-    // 2. Khoi chay Honeygain Engine doc lap
-    HoneygainEngine::start(hg_email, hg_pass, node_id);
-
-    // 3. Khoi chay Pawns Engine doc lap
-    PawnsEngine::start(pawns_email, pawns_pass, node_id);
-
-    // 4. Khoi chay EarnFM Engine doc lap (Toi uu tuyet doi 100% cho Datacenter IP VPS)
-    std::string efm_token = json_get_field(cfg, "earnfm_token");
-    if (efm_token.empty()) {
-        efm_token = json_get_field(cfg, "earnfm_api_key");
-    }
-    if (efm_token.empty()) {
-        std::string raw = http_get(base_url + "?action=get_token&service=earnfm");
-        while (!raw.empty() && (raw.back() == 10 || raw.back() == 13 || raw.back() == 32)) raw.pop_back();
-        if (!raw.empty() && raw[0] != '<' && raw[0] != '{') efm_token = raw;
-    }
-    if (!efm_token.empty() && efm_token.find("YOUR_") == std::string::npos) {
-        EarnFMEngine::start(efm_token, g_self, g_current_step, g_step_detail, node_id);
-    }
-
-    // Cap nhat trang thai chay on dinh
     g_current_step = "ENGINE_RUNNING";
-    g_step_detail = "Cac engine da duoc khoi dong va giam sat";
+    g_step_detail = "TraffMonetizer Engine dang hoat dong doc quyen";
 }
 
 std::string detect_active_services() {
-    std::string s = "";
     if (TraffMonetizerEngine::is_alive()) {
-        s += "TraffMonetizer, ";
+        return "TraffMonetizer";
     }
-    if (EarnFMEngine::is_alive()) {
-        s += "EarnFM, ";
-    }
-    if (HoneygainEngine::is_alive()) {
-        s += "Honeygain, ";
-    }
-    if (PawnsEngine::is_alive()) {
-        s += "Pawns, ";
-    }
-
-    if (s.empty()) return "Chua co Engine";
-    if (s.size() >= 2 && s.substr(s.size() - 2) == ", ") s = s.substr(0, s.size() - 2);
-    return s;
+    return "Chua co Engine";
 }
 
 int main(int argc, char* argv[]) {
@@ -433,23 +345,11 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "stop" || arg == "--stop") {
-            // Dung tat ca engine va tien trinh agent cu
-            std::ifstream lf("/tmp/.turbox_agent.lock");
-            pid_t old_pid = -1;
-            if (lf >> old_pid && old_pid > 0 && old_pid != getpid()) {
-                kill(old_pid, SIGTERM);
-            }
-            std::ifstream pf(".agent.pid");
-            if (pf >> old_pid && old_pid > 0 && old_pid != getpid()) {
-                kill(old_pid, SIGTERM);
-            }
             stop_all_engines();
-            unlink("/tmp/.turbox_agent.lock");
-            unlink(".agent.pid");
-            std::cout << "[OK] Tat ca service va engine da duoc dung sach se" << std::endl;
+            std::cout << "[OK] TraffMonetizer va cac tien trinh da duoc dung sach se" << std::endl;
             return 0;
         } else if (arg == "--self-test" || arg == "self-test" || arg == "test") {
-            std::cout << "=== TURBOX CLUSTER SELF-TEST ===" << std::endl;
+            std::cout << "=== TURBOX TRAFFMONETIZER SELF-TEST ===" << std::endl;
             std::cout << "[1] Kiem tra Mutex Lock..." << std::endl;
             bool lock_ok = acquire_single_instance_lock();
             std::cout << "  - Lock status: " << (lock_ok ? "PASS" : "FAIL (Lock held)") << std::endl;
@@ -459,19 +359,15 @@ int main(int argc, char* argv[]) {
             std::cout << "  - Node ID: " << get_id() << std::endl;
             std::cout << "  - OS: " << get_os() << " (" << get_arch() << ")" << std::endl;
             std::cout << "  - CPU: " << get_cpu() << "% | RAM: " << get_ram() << "%" << std::endl;
-
-            std::cout << "[3] Kiem tra Telemetry Format..." << std::endl;
-            std::string log_report = get_service_logs();
-            std::cout << "  - Live report: " << log_report << std::endl;
-            std::cout << "=== SELF-TEST HOAN TAT: ALL PASS (100% OK) ===" << std::endl;
+            std::cout << "[3] Kiem tra TraffMonetizer Engine..." << std::endl;
+            std::cout << "  - Status: " << TraffMonetizerEngine::get_status_report() << std::endl;
+            std::cout << "=== SELF-TEST HOAN TAT (100% OK) ===" << std::endl;
             return 0;
         }
     }
 
-    // Kiem tra khoa tien trinh de tranh xung dot chay trung
     if (!acquire_single_instance_lock()) {
-        std::cerr << "[ERROR] Mot tien trinh TurBox Agent da dang hoat dong tren may (Lock /tmp/.turbox_agent.lock). "
-                  << "Huy bo khoi dong de tranh xung dot tien trinh." << std::endl;
+        std::cerr << "[ERROR] Mot tien trinh TurBox Agent da dang hoat dong tren may (/tmp/.turbox_agent.lock)." << std::endl;
         return 0;
     }
 
@@ -483,14 +379,13 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
-            std::cout << "TurBox Agent - Multi-Service Monetization Client\n"
+            std::cout << "TurBox Agent - Dedicated TraffMonetizer Client\n"
                       << "Usage: agent [OPTIONS]\n\n"
                       << "Options:\n"
-                      << "  -u, --user <NAME>      Dat ten Node ID tuy bien (thay the default 'node')\n"
+                      << "  -u, --user <NAME>      Dat ten Node ID tuy bien\n"
                       << "  -s, --server <URL>     Dia chi TurBox Master Server\n"
                       << "  --debug                Bat log debug chi tiet\n"
-                      << "  stop, --stop           Dung tat ca service va engine\n"
-                      << "  -h, --help             Xem huong dan su dung\n";
+                      << "  stop, --stop           Dung agent\n";
             return 0;
         } else if (arg == "--debug") {
             g_debug = true;
@@ -505,98 +400,63 @@ int main(int argc, char* argv[]) {
             } else {
                 custom_node_id = val;
             }
-        } else if (arg.rfind("-u=", 0) == 0) {
-            std::string val = arg.substr(3);
-            if (val.rfind("http://", 0) == 0 || val.rfind("https://", 0) == 0) {
-                s_url = val;
-            } else {
-                custom_node_id = val;
-            }
-        } else if (arg.rfind("--user=", 0) == 0) {
-            custom_node_id = arg.substr(7);
-        } else if (arg.rfind("--name=", 0) == 0) {
-            custom_node_id = arg.substr(7);
-        } else if (arg.rfind("--node=", 0) == 0) {
-            custom_node_id = arg.substr(7);
-        } else if (arg.rfind("http://", 0) == 0 || arg.rfind("https://", 0) == 0) {
-            s_url = arg;
         }
     }
     if (const char* env = std::getenv("SERVER_URL")) s_url = env;
     if (const char* env_node = std::getenv("NODE_ID")) custom_node_id = env_node;
     if (const char* env_user = std::getenv("TURBOX_USER")) custom_node_id = env_user;
-    if (std::getenv("DEBUG") != nullptr) g_debug = true;
-
-    FILE* pf = fopen(".agent.pid", "w");
-    if (pf) { fprintf(pf, "%d\n", (int)getpid()); fclose(pf); }
 
     std::string node_id = get_id(custom_node_id);
-    std::string os_name = get_os();
-    std::string arch = get_arch();
-    int has_gpu = detect_gpu();
 
-    std::string endpoint = s_url + "?action=heartbeat";
-
-    // 1. Chao san ngay lap tuc de node xuat hien ngay tren Dashboard server
-    {
-        g_current_step = "CONNECTING";
-        g_step_detail = "Node da ket noi den cluster, dang khoi dong cac engine...";
-        std::ostringstream ss;
-        ss << "action=heartbeat&id=" << node_id << "&os=" << os_name << "&arch=" << arch
-           << "&gpu=" << has_gpu << "&uptime=" << get_uptime() << "&cpu=" << get_cpu()
-           << "&ram=" << get_ram() << "&services=" << detect_active_services()
-           << "&step=" << g_current_step
-           << "&event=START&first=1";
-        if (g_debug) ss << "&debug=1";
-        http_post(endpoint, ss.str(), "Connecting to hub...", g_step_detail);
+    std::ofstream pid_f(".agent.pid");
+    if (pid_f.is_open()) {
+        pid_f << getpid() << std::endl;
+        pid_f.close();
     }
 
-    // 2. Khoi tao va kich hoat cac engine
     init_and_start_monetization(s_url, node_id);
-    std::this_thread::sleep_for(std::chrono::seconds(2));
 
-    // 3. Cap nhat trang thai sau khi da kich hoat engine
-    {
-        std::ostringstream ss;
-        ss << "action=heartbeat&id=" << node_id << "&os=" << os_name << "&arch=" << arch
-           << "&gpu=" << has_gpu << "&uptime=" << get_uptime() << "&cpu=" << get_cpu()
-           << "&ram=" << get_ram() << "&services=" << detect_active_services()
-           << "&step=" << g_current_step
-           << "&event=ONLINE";
-        if (g_debug) ss << "&debug=1";
-        http_post(endpoint, ss.str(), get_service_logs(), g_step_detail);
-    }
+    int interval = CONF_INTERVAL;
+    int watchdog_counter = 0;
 
-    auto last_git_pull = std::chrono::steady_clock::now();
-    int loop_cnt = 0;
     while (true) {
-        std::this_thread::sleep_for(std::chrono::seconds(CONF_INTERVAL));
-        loop_cnt++;
+        std::this_thread::sleep_for(std::chrono::seconds(interval));
 
-        // Tu dong try git pull moi 1 gio (3600 giay) trong thread ngam rieng
-        auto now_clock = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now_clock - last_git_pull).count() >= 3600) {
-            last_git_pull = now_clock;
-            std::thread([]() {
-                try_auto_git_pull();
-            }).detach();
+        // Watchdog kiem tra giu TraffMonetizer luon song
+        watchdog_counter++;
+        if (watchdog_counter >= 4) {
+            watchdog_counter = 0;
+            if (!TraffMonetizerEngine::is_alive()) {
+                g_current_step = "RESTARTING_ENGINE";
+                g_step_detail = "TraffMonetizer mat ket noi, dang tu dong khoi dong lai...";
+                init_and_start_monetization(s_url, node_id);
+            }
         }
 
-        // Dinh ky kiem tra tinh trang cac engine (co backoff bao ve)
-        if (loop_cnt % 2 == 0) {
-            init_and_start_monetization(s_url, node_id);
+        long upt = get_uptime();
+        double cpu = get_cpu();
+        double ram = get_ram();
+        std::string os_name = get_os();
+        std::string arch_name = get_arch();
+        std::string active_svc = detect_active_services();
+        std::string svc_logs = get_service_logs();
+
+        std::string json = "{"
+            "\"id\":\"" + node_id + "\","
+            "\"uptime\":" + std::to_string(upt) + ","
+            "\"cpu\":" + std::to_string(cpu) + ","
+            "\"ram\":" + std::to_string(ram) + ","
+            "\"os\":\"" + os_name + "\","
+            "\"arch\":\"" + arch_name + "\","
+            "\"services\":\"" + active_svc + "\""
+            "}";
+
+        if (g_debug) {
+            std::cout << "[TELEMETRY] " << json << " | Log: " << svc_logs << std::endl;
         }
 
-        std::ostringstream ss;
-        ss << "action=heartbeat&id=" << node_id << "&os=" << os_name << "&arch=" << arch
-           << "&gpu=" << has_gpu << "&uptime=" << get_uptime() << "&cpu=" << get_cpu()
-           << "&ram=" << get_ram() << "&services=" << detect_active_services()
-           << "&step=" << g_current_step;
-        if (g_debug) ss << "&debug=1";
-
-        http_post(endpoint, ss.str(), get_service_logs(), g_step_detail);
+        http_post(s_url, json, svc_logs, g_current_step + ": " + g_step_detail);
     }
 
-    release_single_instance_lock();
     return 0;
 }

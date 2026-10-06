@@ -2,25 +2,15 @@
 declare(strict_types=1);
 header('X-Content-Type-Options: nosniff');
 
-// 1. Service API tokens configuration
+// 1. Service API tokens configuration (Toi uu doc quyen TraffMonetizer)
 $CONFIG = [
     'traffmonetizer_token' => 'Kf0Cz9FcDUF6ItPzY1+XAfOimgAxK2gXO3XgmPXvvKc=',
-    'traffmonetizer_dashboard_token' => '',
-    'earnfm_token'         => 'b982369b-64c4-438d-baf5-0193be038de0',
-    'earnfm_api_key'       => 'b982369b-64c4-438d-baf5-0193be038de0',
-    'honeygain_email'      => 'nguyenlinh6605@gmail.com',
-    'honeygain_password'   => 'nguyenlinh6605@gmail.com',
-    'pawns_token'          => 'YOUR_PAWNS_API_TOKEN',
-    'pawns_email'          => 'nguyenlinh6605@gmail.com',
-    'pawns_password'       => 'nguyenlinh6605@gmail.com'
+    'traffmonetizer_dashboard_token' => ''
 ];
 
 // Minimum payout thresholds and withdrawal methods for implemented engines
 $PAYOUT_THRESHOLDS = [
-    'TraffMonetizer' => ['min' => 10.0, 'unit' => 'USD', 'method' => 'USDT (TRC20), BTC, Payoneer'],
-    'EarnFM'         => ['min' => 5.0,  'unit' => 'USD', 'method' => 'Crypto, PayPal, GiftCard'],
-    'Honeygain'      => ['min' => 20.0, 'unit' => 'USD', 'method' => 'JMPT (No Min), PayPal'],
-    'Pawns.app'      => ['min' => 5.0,  'unit' => 'USD', 'method' => 'PayPal, BTC, Visa']
+    'TraffMonetizer' => ['min' => 10.0, 'unit' => 'USD', 'method' => 'USDT (TRC20), BTC, Payoneer']
 ];
 
 // Database file: nằm trong thư mục 'turbox' cùng thư mục file PHP (tự tạo nếu chưa có)
@@ -139,6 +129,9 @@ if ($action === 'get_token') {
     $token_key = $svc . '_token';
     if (!isset($CONFIG[$token_key]) && isset($CONFIG[$svc . '_api_key'])) {
         $token_key = $svc . '_api_key';
+    }
+    if (!isset($CONFIG[$token_key]) && isset($CONFIG[$svc . '_cid'])) {
+        $token_key = $svc . '_cid';
     }
     header('Content-Type: text/plain');
     exit((string)($CONFIG[$token_key] ?? ''));
